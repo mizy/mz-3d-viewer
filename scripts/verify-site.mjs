@@ -454,6 +454,27 @@ check("?webgl=1 走 WebGL2 回退后端并渲染", fallbackBadge === "WebGL2（�
   `${fallbackBadge} 模型占画面 ${(fallbackDiff * 100).toFixed(1)}% tri=${fallbackSummary.models[0]?.triangles}`);
 check("回退路径无控制台错误", consoleErrors.length === 0 && pageErrors.length === 0, [...consoleErrors, ...pageErrors].slice(0, 3).join(" | "));
 
+// ---------------------------------------------------------------- 7. narrow screen
+
+await page.setViewportSize({ width: 390, height: 844 });
+await boot();
+const closedTransform = await page.evaluate(() => getComputedStyle(document.querySelector(".sidebar")).transform);
+const toggleVisible = await page.isVisible("#sidebarToggle");
+await page.click("#sidebarToggle");
+await page.waitForTimeout(400);
+const openTransform = await page.evaluate(() => getComputedStyle(document.querySelector(".sidebar")).transform);
+check("窄屏（390×844）：侧栏默认收起、面板按钮能展开", toggleVisible && closedTransform !== "none" && openTransform === "none",
+  `${closedTransform} → ${openTransform}`);
+
+const mobileSummary = await loadSample([sample.stl]);
+const mobileCanvas = await page.evaluate(() => {
+  const canvas = document.getElementById("view");
+  return [canvas.clientWidth, canvas.clientHeight];
+});
+const mobileFrame = await signature();
+check("窄屏下能打开并渲染模型", mobileSummary.models.length === 1 && mobileCanvas[0] === 390 && stdLuminance(mobileFrame) > 1,
+  `canvas ${mobileCanvas.join("x")} tri=${mobileSummary.models[0]?.triangles}`);
+
 // ---------------------------------------------------------------- summary
 
 await browser.close();

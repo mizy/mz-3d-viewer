@@ -33,13 +33,26 @@ sub-path (`/mz-3d-viewer/`) so the GitHub Pages layout is what gets tested. Flag
 | `src/loaders/step.ts` + `public/wasm/occt/step-worker.js` | OpenCascade wasm in a classic worker (7.6MB, never on the main thread) |
 | `src/ui/app.ts` | DOM wiring only: files, list, settings, progress, stats, test hooks |
 | `src/pwa/register.ts` | service worker registration + update reload + OS file handlers |
-| `scripts/write-sw.mjs`, `scripts/sw-template.js` | build-time precache manifest; shell cached eagerly, CAD engine warmed after install |
+| `src/pwa/cadEngineWarm.ts` | page-driven download of the 7.6MB OpenCascade engine into the SW cache, verified byte-for-byte, skipped when already cached |
+| `scripts/write-sw.mjs`, `scripts/sw-template.js` | build-time precache manifest (shell + decoders cached at install, engine cached on first use) |
 
 Parsing contract: every loader returns `ParsedModel` (an `Object3D` root plus warnings). The stage
 only knows how to add/remove/frame that shape — it has no per-format branches.
 
 `window.__mzViewer` exposes `{ stage, backend, capture(), summary() }` for the acceptance run and for
 debugging a live deployment.
+
+## Verification
+
+`pnpm verify` prints 35 checks; all of them run against a real Chrome and the built site served at
+`/mz-3d-viewer/` (the Pages layout, relative asset paths and SW scope included). It covers: backend
+detection, every file format, render output measured against a model-hidden baseline frame, edge /
+wireframe / section / view / unit switches, model list operations, manifest + worker + cache contents,
+and offline behaviour after `Network.clearBrowserCache` — the HTTP cache is wiped first on purpose,
+because GitHub Pages' `cache-control: max-age=600` otherwise makes "offline" pass without a service
+worker at all.
+
+Run the same suite against the deployment: `node scripts/verify-site.mjs --url=https://mizy.github.io/mz-3d-viewer/`（远程模式自动把超时放宽 4 倍）。
 
 ## Format notes
 
@@ -58,6 +71,8 @@ debugging a live deployment.
 - Units: lengths are treated as millimetres for the bounding-box readout; the unit selector converts
   the readout, it does not rescale geometry.
 - Section view clips without capping the cut, so a hollow part shows its interior.
+- The OpenCascade engine is a one-time 7.6MB download (cached per build, then available offline).
+  The sidebar footer reports its state; on a slow link the first STEP file is slow, later ones are not.
 - KTX2 textures on the WebGL2 fallback backend depend on `KTX2Loader.detectSupport` succeeding; the
   failure path is a visible warning, not a silent blank surface.
 
