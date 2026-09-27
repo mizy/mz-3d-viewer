@@ -28,6 +28,9 @@ const base = remoteUrl === null
   : new URL(remoteUrl).pathname;
 const siteUrl = remoteUrl === null ? `http://127.0.0.1:${port}${base}` : remoteUrl;
 
+/** Remote runs pull ~8MB of wasm over whatever link the machine has; give them room. */
+const timeoutScale = remoteUrl === null ? 1 : 4;
+
 const results = [];
 function check(name, ok, detail = "") {
   results.push({ name, ok, detail });
@@ -198,7 +201,7 @@ async function setAllVisible(visible) {
 
 async function loadSample(files) {
   await page.setInputFiles("#fileInput", files);
-  await page.waitForFunction(() => document.getElementById("progressWrap").hidden === true, null, { timeout: 90000 });
+  await page.waitForFunction(() => document.getElementById("progressWrap").hidden === true, null, { timeout: 90000 * timeoutScale });
   await page.waitForTimeout(500);
   return page.evaluate(() => window.__mzViewer.summary());
 }
@@ -389,7 +392,7 @@ check("外壳预缓存：哈希资源 + worker + 图标", swState.hasHashedShell
 // The engine is warmed by the page (src/pwa/cadEngineWarm.ts) and verified against the built
 // bytes, because "it is in some cache" is exactly the claim that was wrong before.
 const cadReady = await page
-  .waitForFunction(() => window.__mzViewer?.cadEngine().status === "ready", null, { timeout: 150000 })
+  .waitForFunction(() => window.__mzViewer?.cadEngine().status === "ready", null, { timeout: 150000 * timeoutScale })
   .then(() => true)
   .catch(() => false);
 const cadCached = await page.evaluate(async () => {
@@ -439,6 +442,9 @@ await offlineContext.setOffline(false);
 
 // ---------------------------------------------------------------- 6. WebGL2 fallback
 
+// Reset first: the offline phase above deliberately produces network errors.
+consoleErrors.length = 0;
+pageErrors.length = 0;
 await boot(`${siteUrl}?webgl=1`);
 const fallbackBadge = await page.textContent("#backendBadge");
 const fallbackSummary = await loadSample([sample.stl]);

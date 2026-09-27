@@ -73,7 +73,7 @@ async function handleAsset(request) {
     return cached;
   }
   const response = await fetch(request);
-  if (response.ok) {
+  if (response.ok && request.method === "GET") {
     const cacheName = isCadEngine(new URL(request.url)) ? CAD_CACHE : SHELL_CACHE;
     const cache = await caches.open(cacheName);
     await cache.put(new Request(request.url), response.clone());

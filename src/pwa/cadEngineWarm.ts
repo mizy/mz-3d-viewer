@@ -25,34 +25,51 @@ export function describeWarmState(state: CadEngineWarmState): string {
 }
 
 /**
- * Downloads the OpenCascade engine through the page so the service worker stores it.
+ * Makes sure the OpenCascade engine is in the service worker cache, so STEP/IGES/BREP also
+ * work offline later.
  *
- * Why not let the service worker download it in the background: a 7.6MB fetch started from a
- * message handler is not protected by `respondWith`, so Chrome is free to stop the worker
- * mid-download (observed: the JS landed, the wasm silently never did). Here the page awaits the
- * response body, which keeps the service worker's streaming `respondWith` alive to the last byte,
- * and the result is verified against the cache instead of assumed.
+ * Two things this deliberately does differently from the obvious implementation:
+ *
+ * 1. The page downloads it, not the service worker. A 7.6MB fetch started from an SW message
+ *    handler is not protected by `respondWith`, so Chrome may stop the worker mid-download —
+ *    measured on the live site: the 96KB glue always landed, the wasm often did not.
+ *    Awaiting the body here keeps the worker's streaming `respondWith` alive to the last byte.
+ * 2. A file whose cached size already equals its `Content-Length` is skipped, so reloading the
+ *    page does not re-pull 7.6MB every time (it is a one-time cost per build).
  */
 export async function warmCadEngine(
   onState: (state: CadEngineWarmState) => void
 ): Promise<CadEngineWarmState> {
-  const cached = await readCadCache();
-  const totalBytes = cached.totalBytes + (await remainingBytes(cached.paths));
-
-  const state: CadEngineWarmState = { status: "warming", cachedBytes: cached.totalBytes, totalBytes, detail: "" };
-  onState(state);
-
-  if (!(await waitForController(10000))) {
-    const failed: CadEngineWarmState = { ...state, status: "failed", detail: "页面还没被 Service Worker 接管" };
-    onState(failed);
-    return failed;
+  const sizes = new Map<string, number | null>();
+  for (const path of CAD_ENGINE_FILES) {
+    sizes.set(path, await contentLength(assetUrl(path)));
+  }
+  const totalBytes = [...sizes.values()].reduce<number>((sum, size) => sum + (size ?? 0), 0);
+  const cachedPaths = (await readCadCache()).paths;
+  const alreadyCached = CAD_ENGINE_FILES.filter((path) => {
+    const expected = sizes.get(path) ?? null;
+    const cached = cachedPaths.get(pathKey(path)) ?? 0;
+    return expected === null ? cached > 0 : cached === expected;
+  });
+  if (alreadyCached.length === CAD_ENGINE_FILES.length) {
+    const cache = await readCadCache();
+    const bytes = cachedBytes(cache.paths);
+    return report(onState, { status: "ready", cachedBytes: bytes, totalBytes: bytes, detail: "" });
   }
 
+  onState({ status: "warming", cachedBytes: cachedBytes(cachedPaths), totalBytes, detail: "" });
+
   for (const path of CAD_ENGINE_FILES) {
+    if (alreadyCached.includes(path)) {
+      continue;
+    }
+    if (!(await waitForController(10000))) {
+      return report(onState, { status: "failed", cachedBytes: cachedBytes(cachedPaths), totalBytes, detail: "页面还没被 Service Worker 接管" });
+    }
     const url = assetUrl(path);
-    const key = new URL(url).pathname;
-    let ok = false;
+    const key = pathKey(path);
     let lastError = "";
+    let ok = false;
     for (let attempt = 1; attempt <= 3 && !ok; attempt += 1) {
       try {
         const response = await fetch(new Request(url, { cache: "reload" }));
@@ -71,31 +88,45 @@ export async function warmCadEngine(
         lastError = error instanceof Error ? error.message : String(error);
       }
       if (!ok) {
-        onState({ ...state, cachedBytes: (await readCadCache()).totalBytes, detail: lastError });
+        onState({ status: "warming", cachedBytes: cachedBytes((await readCadCache()).paths), totalBytes, detail: lastError });
       }
     }
     if (!ok) {
-      const failed: CadEngineWarmState = {
+      return report(onState, {
         status: "failed",
-        cachedBytes: (await readCadCache()).totalBytes,
+        cachedBytes: cachedBytes((await readCadCache()).paths),
         totalBytes,
         detail: `${path}: ${lastError}`
-      };
-      onState(failed);
-      return failed;
+      });
     }
   }
 
-  const finalCache = await readCadCache();
-  onState({ status: "ready", cachedBytes: finalCache.totalBytes, totalBytes: finalCache.totalBytes, detail: "" });
-  return { status: "ready", cachedBytes: finalCache.totalBytes, totalBytes: finalCache.totalBytes, detail: "" };
+  const cache = await readCadCache();
+  const bytes = cachedBytes(cache.paths);
+  return report(onState, { status: "ready", cachedBytes: bytes, totalBytes: bytes, detail: "" });
 }
 
-type CadCacheState = { paths: Map<string, number>; totalBytes: number };
+function pathKey(path: string): string {
+  return new URL(assetUrl(path)).pathname;
+}
+
+function cachedBytes(paths: Map<string, number>): number {
+  let total = 0;
+  for (const size of paths.values()) {
+    total += size;
+  }
+  return total;
+}
+
+function report(onState: (state: CadEngineWarmState) => void, state: CadEngineWarmState): CadEngineWarmState {
+  onState(state);
+  return state;
+}
+
+type CadCacheState = { paths: Map<string, number> };
 
 async function readCadCache(): Promise<CadCacheState> {
   const paths = new Map<string, number>();
-  let totalBytes = 0;
   for (const name of await caches.keys()) {
     if (!name.startsWith("cad-")) {
       continue;
@@ -106,31 +137,24 @@ async function readCadCache(): Promise<CadCacheState> {
       if (response === undefined) {
         continue;
       }
-      const size = (await response.blob()).size;
-      paths.set(new URL(request.url).pathname, size);
-      totalBytes += size;
+      paths.set(new URL(request.url).pathname, (await response.blob()).size);
     }
   }
-  return { paths, totalBytes };
+  return { paths };
 }
 
-/** Expected total size, read from the network when the cache is incomplete. */
-async function remainingBytes(cached: Map<string, number>): Promise<number> {
-  let remaining = 0;
-  for (const path of CAD_ENGINE_FILES) {
-    const key = new URL(assetUrl(path)).pathname;
-    if (cached.has(key)) {
-      continue;
+/** `null` when the server does not report a length, in which case any cached copy counts. */
+async function contentLength(url: string): Promise<number | null> {
+  try {
+    const response = await fetch(new Request(url, { method: "HEAD", cache: "reload" }));
+    if (!response.ok) {
+      return null;
     }
-    try {
-      const response = await fetch(new Request(assetUrl(path), { method: "HEAD" }));
-      const length = Number(response.headers.get("content-length") ?? "0");
-      remaining += Number.isFinite(length) ? length : 0;
-    } catch {
-      remaining += 0;
-    }
+    const length = Number(response.headers.get("content-length") ?? "");
+    return Number.isFinite(length) && length > 0 ? length : null;
+  } catch {
+    return null;
   }
-  return remaining;
 }
 
 function waitForController(timeoutMs: number): Promise<boolean> {
@@ -138,13 +162,13 @@ function waitForController(timeoutMs: number): Promise<boolean> {
     return Promise.resolve(true);
   }
   return new Promise<boolean>((resolve) => {
+    const timer = window.setTimeout(() => done(navigator.serviceWorker.controller !== null), timeoutMs);
+    const onChange = (): void => done(true);
     const done = (value: boolean): void => {
       window.clearTimeout(timer);
       navigator.serviceWorker.removeEventListener("controllerchange", onChange);
       resolve(value);
     };
-    const onChange = (): void => done(true);
-    const timer = window.setTimeout(() => done(navigator.serviceWorker.controller !== null), timeoutMs);
     navigator.serviceWorker.addEventListener("controllerchange", onChange);
   });
 }
