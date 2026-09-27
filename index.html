@@ -1,0 +1,122 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<title>3D 模型查看器 · STL / OBJ / glTF / STEP</title>
+<meta name="description" content="WebGPU 加速的本地 3D 模型查看器，支持 STL、OBJ、glTF、STEP。模型不上传，全部在浏览器本地解析。" />
+<meta name="theme-color" content="#0e1116" />
+<meta name="x-build" content="dev" />
+<link rel="manifest" href="./manifest.webmanifest" />
+<link rel="icon" href="./icons/icon-192.png" />
+<link rel="apple-touch-icon" href="./icons/icon-192.png" />
+<link rel="stylesheet" href="./src/ui/styles.css" />
+</head>
+<body>
+<div class="app">
+  <header class="topbar">
+    <div class="brand">
+      <span class="brand-mark">3D</span>
+      <span class="brand-name">模型查看器</span>
+      <span id="backendBadge" class="badge badge-pending">渲染后端检测中…</span>
+    </div>
+    <div class="topbar-actions">
+      <button id="sidebarToggle" class="btn btn-small sidebar-toggle" type="button">面板</button>
+      <button id="openBtn" class="btn btn-primary" type="button">打开模型</button>
+      <button id="shotBtn" class="btn" type="button" disabled>截图</button>
+      <button id="fullscreenBtn" class="btn" type="button">全屏</button>
+    </div>
+  </header>
+
+  <aside class="sidebar">
+    <section class="panel">
+      <h2>模型</h2>
+      <ul id="modelList" class="model-list">
+        <li class="empty" id="modelListEmpty">还没有模型，把文件拖进右侧窗口</li>
+      </ul>
+    </section>
+
+    <section class="panel">
+      <h2>显示</h2>
+      <div class="row" role="radiogroup" aria-label="显示模式">
+        <label class="chip"><input type="radio" name="style" id="styleSolid" checked />实体</label>
+        <label class="chip"><input type="radio" name="style" id="styleEdges" />带边线</label>
+        <label class="chip"><input type="radio" name="style" id="styleWireframe" />线框</label>
+      </div>
+      <label class="row"><input type="checkbox" id="gridToggle" checked />地板网格</label>
+      <label class="row"><input type="checkbox" id="sectionToggle" />剖面切开</label>
+      <label class="row">剖面方向
+        <select id="sectionAxisSelect" disabled>
+          <option value="x" selected>沿 X 切</option>
+          <option value="y">沿 Y 切</option>
+          <option value="z">沿 Z 切</option>
+        </select>
+      </label>
+      <label class="row row-range">剖面位置 <input type="range" id="sectionOffset" min="0" max="100" value="50" disabled /></label>
+      <label class="row">单位
+        <select id="unitSelect">
+          <option value="mm" selected>毫米 mm</option>
+          <option value="cm">厘米 cm</option>
+          <option value="m">米 m</option>
+          <option value="in">英寸 in</option>
+        </select>
+      </label>
+      <label class="row">CAD 精度
+        <select id="cadQualitySelect">
+          <option value="fast">快速（大装配体）</option>
+          <option value="standard" selected>标准</option>
+          <option value="fine">精细（小零件）</option>
+        </select>
+      </label>
+      <label class="row">边线角度
+        <select id="edgeAngleSelect">
+          <option value="15">15°（细节多）</option>
+          <option value="30" selected>30°（推荐）</option>
+          <option value="45">45°（细节少）</option>
+        </select>
+      </label>
+    </section>
+
+    <section class="panel">
+      <h2>信息</h2>
+      <dl id="statsBox" class="stats"><dt>状态</dt><dd id="statStatus">等待文件</dd></dl>
+    </section>
+
+    <footer class="sidebar-footer">
+      <div id="buildStamp" class="mono">build dev</div>
+      <div class="hint">所有解析都在本机浏览器完成，文件不会上传。</div>
+    </footer>
+  </aside>
+
+  <main class="stage" id="stage">
+    <canvas id="view"></canvas>
+    <div id="dropHint" class="drop-hint">
+      <div class="drop-hint-inner">
+        <strong>拖入模型文件</strong>
+        <span>STL · OBJ · glTF/GLB · STEP / IGES / BREP</span>
+        <span class="muted">OBJ 的贴图可以和 .obj/.mtl 一起多选拖入</span>
+      </div>
+    </div>
+    <div id="dragOverlay" class="drag-overlay" hidden><span>松手即打开</span></div>
+    <div id="progressWrap" class="progress" hidden>
+      <div id="progressLabel" class="progress-label">解析中…</div>
+      <div class="progress-track"><div id="progressBar" class="progress-bar"></div></div>
+      <button id="cancelBtn" class="btn btn-small" type="button">取消</button>
+    </div>
+    <div class="view-panel" role="group" aria-label="标准视图">
+      <button class="btn btn-small" data-view="front" type="button">前</button>
+      <button class="btn btn-small" data-view="back" type="button">后</button>
+      <button class="btn btn-small" data-view="left" type="button">左</button>
+      <button class="btn btn-small" data-view="right" type="button">右</button>
+      <button class="btn btn-small" data-view="top" type="button">顶</button>
+      <button class="btn btn-small" data-view="bottom" type="button">底</button>
+      <button class="btn btn-small" data-view="iso" type="button">等轴</button>
+      <button class="btn btn-small btn-accent" id="fitBtn" type="button">适应</button>
+    </div>
+    <div id="toast" class="toast" hidden></div>
+  </main>
+</div>
+<input id="fileInput" type="file" multiple hidden />
+<script type="module" src="./src/main.ts"></script>
+</body>
+</html>

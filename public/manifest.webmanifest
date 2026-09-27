@@ -1,0 +1,33 @@
+{
+  "name": "3D 模型查看器 · STL / OBJ / glTF / STEP",
+  "short_name": "3D 查看器",
+  "description": "WebGPU 加速的本地 3D 模型查看器：STL、OBJ、glTF/GLB、STEP/IGES/BREP。文件不上传，全部在浏览器里解析。",
+  "id": "mz-3d-viewer",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#0e1116",
+  "theme_color": "#0e1116",
+  "lang": "zh-CN",
+  "icons": [
+    { "src": "./icons/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "./icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "./icons/icon-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ],
+  "file_handlers": [
+    {
+      "action": "./",
+      "accept": {
+        "model/stl": [".stl"],
+        "model/obj": [".obj"],
+        "model/gltf-binary": [".glb"],
+        "model/gltf+json": [".gltf"],
+        "application/step": [".step", ".stp"],
+        "model/iges": [".iges", ".igs"],
+        "model/brep": [".brep"]
+      }
+    }
+  ],
+  "categories": ["productivity", "graphics", "utilities"]
+}
