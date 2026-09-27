@@ -1,4 +1,5 @@
 import { assetUrl } from "../assetBase";
+import { warmCadEngine, type CadEngineWarmState } from "./cadEngineWarm";
 
 const CONTROLLER_RELOAD_FLAG = "mz-3d-viewer.controller-reload";
 
@@ -10,7 +11,7 @@ const CONTROLLER_RELOAD_FLAG = "mz-3d-viewer.controller-reload";
  * Registration is not wired to the window `load` event alone: the await-heavy boot can
  * finish after `load` has already fired, which would skip registration forever.
  */
-export function registerServiceWorker(): void {
+export function registerServiceWorker(onCadEngineState: (state: CadEngineWarmState) => void): void {
   if (import.meta.env.PROD !== true || !("serviceWorker" in navigator)) {
     return;
   }
@@ -30,11 +31,11 @@ export function registerServiceWorker(): void {
   const register = (): void => {
     void navigator.serviceWorker
       .register(assetUrl("sw.js"), { scope: "./" })
-      .then(async (registration) => {
+      .then(async () => {
         await navigator.serviceWorker.ready;
-        // Warm the 7.6MB OpenCascade engine in the background so STEP files also work offline.
-        const worker = registration.active ?? navigator.serviceWorker.controller;
-        worker?.postMessage({ type: "warm-cad-engine" });
+        // Warm the 7.6MB OpenCascade engine so STEP files also work offline. Deliberately not
+        // awaited: the app must be usable while the engine downloads in the background.
+        void warmCadEngine(onCadEngineState);
       })
       .catch((error: unknown) => {
         console.warn("[pwa] service worker 注册失败", error);

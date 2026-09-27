@@ -5,6 +5,7 @@ import { CAD_QUALITY_PRESETS, type CadQuality } from "../loaders/step";
 import { describeError } from "../loaders/gltf";
 import type { CancelSignal, ParsedModel } from "../loaders/types";
 import type { ViewerTestHooks } from "./testHooks";
+import { describeWarmState, type CadEngineWarmState } from "../pwa/cadEngineWarm";
 
 type Backend = "webgpu" | "webgl2";
 type ToastKind = "info" | "warn" | "error";
@@ -28,7 +29,12 @@ const FORMAT_TITLES: Record<string, string> = {
   brep: "BREP"
 };
 
-export function createApp(stage: Stage, backend: Backend, forceWebGL: boolean): void {
+export type AppHandle = {
+  /** Called by the PWA layer as the OpenCascade engine download progresses. */
+  setCadEngineState: (state: CadEngineWarmState) => void;
+};
+
+export function createApp(stage: Stage, backend: Backend, forceWebGL: boolean): AppHandle {
   const canvas = el<HTMLCanvasElement>("view");
   const backendBadge = el<HTMLSpanElement>("backendBadge");
   const openBtn = el<HTMLButtonElement>("openBtn");
@@ -48,6 +54,7 @@ export function createApp(stage: Stage, backend: Backend, forceWebGL: boolean): 
   const statsBox = el<HTMLDListElement>("statsBox");
   const statStatus = el<HTMLElement>("statStatus");
   const buildStamp = el<HTMLDivElement>("buildStamp");
+  const cadEngineStateEl = el<HTMLDivElement>("cadEngineState");
   const toastEl = el<HTMLDivElement>("toast");
   const gridToggle = el<HTMLInputElement>("gridToggle");
   const sectionToggle = el<HTMLInputElement>("sectionToggle");
@@ -65,6 +72,7 @@ export function createApp(stage: Stage, backend: Backend, forceWebGL: boolean): 
   let busy = false;
   let cancelSignal: CancelSignal | null = null;
   let toastTimer: number | null = null;
+  let cadEngineState: CadEngineWarmState = { status: "idle", cachedBytes: 0, totalBytes: 0, detail: "" };
 
   const build = document.querySelector<HTMLMetaElement>('meta[name="x-build"]')?.content ?? "dev";
   buildStamp.textContent = `build ${build}`;
@@ -98,6 +106,12 @@ export function createApp(stage: Stage, backend: Backend, forceWebGL: boolean): 
   function hideProgress(): void {
     progressWrap.hidden = true;
     progressBar.style.width = "0%";
+  }
+
+  function setCadEngineState(state: CadEngineWarmState): void {
+    cadEngineState = state;
+    cadEngineStateEl.textContent = describeWarmState(state);
+    cadEngineStateEl.className = state.status === "ready" ? "mono ok" : state.status === "failed" ? "mono warn" : "mono";
   }
 
   function setStatus(text: string): void {
@@ -458,6 +472,7 @@ export function createApp(stage: Stage, backend: Backend, forceWebGL: boolean): 
     stage,
     backend,
     capture: () => stage.captureNextFrame(),
+    cadEngine: () => cadEngineState,
     summary: () => ({
       models: stage.modelList.map((handle) => ({
         id: handle.id,
@@ -473,7 +488,8 @@ export function createApp(stage: Stage, backend: Backend, forceWebGL: boolean): 
       gridVisible: gridToggle.checked,
       sectionEnabled: sectionToggle.checked,
       backend,
-      build
+      build,
+      cadEngineStatus: cadEngineState.status
     })
   };
   window.__mzViewer = hooks;
@@ -481,6 +497,8 @@ export function createApp(stage: Stage, backend: Backend, forceWebGL: boolean): 
   renderModelList();
   renderStats();
   canvas.addEventListener("contextmenu", (event) => event.preventDefault());
+
+  return { setCadEngineState };
 }
 
 function stripExtension(name: string): string {

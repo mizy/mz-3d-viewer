@@ -8,7 +8,7 @@
  *   node scripts/verify-site.mjs --base=/        # serve at the site root instead of a subdir
  */
 import { spawn } from "node:child_process";
-import { mkdtemp, readFile, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -386,31 +386,55 @@ check("Service Worker 已注册并接管页面", swState.controlled === true && 
 check("外壳预缓存：哈希资源 + worker + 图标", swState.hasHashedShell === true && swState.hasWorker === true && swState.hasIcons === true,
   `${swState.entries} 个条目，缓存 ${(swState.names ?? []).join(", ")}`);
 
-const warmed = await page.waitForFunction(async () => {
-  const names = await caches.keys();
-  const cad = names.find((name) => name.startsWith("cad-"));
-  if (cad === undefined) return false;
-  const cache = await caches.open(cad);
-  const keys = (await cache.keys()).map((request) => request.url);
-  return keys.some((url) => url.endsWith("occt-import-js.wasm"));
-}, null, { timeout: 90000 }).then(() => true).catch(() => false);
-check("OpenCascade 引擎在后台预热进 CAD 缓存", warmed);
+// The engine is warmed by the page (src/pwa/cadEngineWarm.ts) and verified against the built
+// bytes, because "it is in some cache" is exactly the claim that was wrong before.
+const cadReady = await page
+  .waitForFunction(() => window.__mzViewer?.cadEngine().status === "ready", null, { timeout: 150000 })
+  .then(() => true)
+  .catch(() => false);
+const cadCached = await page.evaluate(async () => {
+  const sizes = {};
+  for (const name of await caches.keys()) {
+    if (!name.startsWith("cad-")) continue;
+    const cache = await caches.open(name);
+    for (const request of await cache.keys()) {
+      const response = await cache.match(request);
+      if (response === undefined) continue;
+      const blob = await response.blob();
+      sizes[new URL(request.url).pathname.split("/").pop()] = blob.size;
+    }
+  }
+  return sizes;
+});
+const localEngineSizes = {
+  "occt-import-js.js": (await stat(path.join(root, "dist", "wasm", "occt", "occt-import-js.js"))).size,
+  "occt-import-js.wasm": (await stat(path.join(root, "dist", "wasm", "occt", "occt-import-js.wasm"))).size
+};
+check("OpenCascade 引擎完整进 SW 缓存（字节数与构建产物逐一对齐）",
+  cadReady === true && cadCached["occt-import-js.wasm"] === localEngineSizes["occt-import-js.wasm"] && cadCached["occt-import-js.js"] === localEngineSizes["occt-import-js.js"],
+  `状态=${await page.evaluate(() => window.__mzViewer.cadEngine().status)} wasm ${cadCached["occt-import-js.wasm"] ?? "缺失"}/${localEngineSizes["occt-import-js.wasm"]} js ${cadCached["occt-import-js.js"] ?? "缺失"}/${localEngineSizes["occt-import-js.js"]}`);
 
 // ---------------------------------------------------------------- 5. offline
 
 const offlineContext = page.context();
 await page.evaluate(() => navigator.serviceWorker.ready);
+// GitHub Pages pins cache-control: max-age=600, so without this the browser's own HTTP cache
+// would serve "offline" requests and every offline check below would be meaningless.
+const cdp = await offlineContext.newCDPSession(page);
+await cdp.send("Network.clearBrowserCache");
 await offlineContext.setOffline(true);
 await boot(siteUrl, 20000).catch((error) => console.log(`   (离线重载警告: ${error.message})`));
 const offlineBadge = await page.textContent("#backendBadge").catch(() => "离线且外壳未缓存");
-check("断网重载仍能启动（外壳来自 SW）", offlineBadge === "WebGPU" || offlineBadge === "WebGL2（回退）", String(offlineBadge));
+check("清空 HTTP 缓存后断网重载仍能启动（外壳确实来自 SW）", offlineBadge === "WebGPU" || offlineBadge === "WebGL2（回退）", String(offlineBadge));
 
 const offlineStl = await loadSample([sample.stl]).catch(() => null);
 check("断网打开 STL", offlineStl !== null && offlineStl.models.length === 1, offlineStl === null ? "失败" : `tri=${offlineStl.models[0].triangles}`);
 
 await boot(siteUrl, 20000);
 const offlineStep = await loadSample([sample.step]).catch(() => null);
-check("断网打开 STEP（CAD 引擎来自 CAD 缓存）", offlineStep !== null && offlineStep.models[0]?.format === "step", offlineStep === null ? "失败" : `tri=${offlineStep.models[0]?.triangles}`);
+check("断网打开 STEP（CAD 引擎来自 CAD 缓存）",
+  offlineStep !== null && offlineStep.models[0]?.format === "step",
+  offlineStep === null ? "失败" : `tri=${offlineStep.models[0]?.triangles} toast=${((await page.textContent("#toast")) ?? "").slice(0, 60)}`);
 await offlineContext.setOffline(false);
 
 // ---------------------------------------------------------------- 6. WebGL2 fallback

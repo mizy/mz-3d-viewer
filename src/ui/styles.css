@@ -123,6 +123,8 @@ select { background: var(--bg-elevated); color: var(--text); border: 1px solid v
 .sidebar-footer { margin-top: auto; padding-top: 8px; color: var(--text-dim); font-size: 11px; display: flex; flex-direction: column; gap: 4px; }
 .sidebar-footer .hint { line-height: 1.4; }
 .mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+.mono.ok { color: #7ee0a4; }
+.mono.warn { color: #ffd98a; }
 
 .stage { grid-area: stage; position: relative; overflow: hidden; }
 #view { display: block; width: 100%; height: 100%; touch-action: none; }

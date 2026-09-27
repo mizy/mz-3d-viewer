@@ -5,8 +5,8 @@
  * Caching rules:
  *   - hashed shell assets: cache-first (the file name changes on every build)
  *   - navigation: network-first with a revalidating request, falling back to the cached shell
- *   - the OpenCascade engine: cached into its own build-versioned cache, warmed after install
- *     so a first visit does not pay 7.6MB before the app is usable
+ *   - the OpenCascade engine: cached into its own build-versioned cache the first time the page
+ *     requests it (src/pwa/cadEngineWarm.ts drives that download, see the comment there)
  */
 const BUILD = "__BUILD__";
 const PRECACHE = __PRECACHE__;
@@ -43,25 +43,6 @@ self.addEventListener("activate", (event) => {
       await self.clients.claim();
     })()
   );
-});
-
-self.addEventListener("message", (event) => {
-  const data = event.data || {};
-  if (data.type === "warm-cad-engine") {
-    event.waitUntil(
-      (async () => {
-        const cache = await caches.open(CAD_CACHE);
-        await Promise.all(
-          CAD_ENGINE.map(async (url) => {
-            const response = await fetch(new Request(url, { cache: "reload" }));
-            if (response.ok) {
-              await cache.put(new Request(url), response);
-            }
-          })
-        );
-      })()
-    );
-  }
 });
 
 function isCadEngine(url) {

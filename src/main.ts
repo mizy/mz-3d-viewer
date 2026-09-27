@@ -20,7 +20,7 @@ const { renderer, backend } = await createRenderer(canvas, forceWebGL);
 const stage = new Stage(renderer, canvas);
 stage.resize();
 
-createApp(stage, backend, forceWebGL);
+const app = createApp(stage, backend, forceWebGL);
 
 const resizeObserver = new ResizeObserver(() => stage.resize());
 resizeObserver.observe(canvas);
@@ -36,4 +36,4 @@ consumeLaunchQueue((files) => {
   input.dispatchEvent(new Event("change"));
 });
 
-registerServiceWorker();
+registerServiceWorker((state) => app.setCadEngineState(state));
