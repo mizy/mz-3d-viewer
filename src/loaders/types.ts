@@ -1,7 +1,7 @@
 import type * as THREE from "three/webgpu";
 
 /** File formats this viewer can parse. `step`/`iges`/`brep` all go through OpenCascade. */
-export type ModelFormat = "stl" | "obj" | "gltf" | "step" | "iges" | "brep";
+export type ModelFormat = "stl" | "obj" | "gltf" | "3mf" | "step" | "iges" | "brep";
 
 export type ParsedModel = {
   format: ModelFormat;

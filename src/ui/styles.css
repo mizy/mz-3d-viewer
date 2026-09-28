@@ -78,6 +78,15 @@ h1 span { color: var(--accent); }
 .nav-home { position: relative; z-index: 1; display: grid; place-items: center; width: 44px; height: 44px; background: transparent; border: 0; color: #7d9b8e; border-radius: 12px; }
 .nav-home .icon { width: 16px; height: 16px; }
 .nav-home:hover { background: #ffffff0a; color: var(--accent); }
+.axis-gizmo { width: 44px; height: 44px; margin-top: 2px; overflow: visible; }
+.axis-arm { stroke-width: 2; stroke-linecap: round; }
+.axis-arm.axis-x { stroke: #ff8080; }
+.axis-arm.axis-y { stroke: #8ee6a8; }
+.axis-arm.axis-z { stroke: #7fb0ff; }
+.axis-label { font-size: 9px; font-weight: 600; text-anchor: middle; dominant-baseline: middle; }
+.axis-label.axis-x { fill: #ff8080; }
+.axis-label.axis-y { fill: #8ee6a8; }
+.axis-label.axis-z { fill: #7fb0ff; }
 .tool-dock { position: absolute; z-index: 2; bottom: calc(38px + env(safe-area-inset-bottom)); left: 50%; transform: translateX(-50%); display: flex; align-items: center; padding: 7px; gap: 4px; border-radius: 24px; }
 .dock-btn { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 5px; width: 68px; min-height: 59px; padding: 7px; background: transparent; border: 0; border-radius: 17px; color: #a6b5bc; font-size: 10px; white-space: nowrap; transition: background .18s, color .18s; }
 .dock-btn .icon { width: 21px; height: 21px; }
@@ -113,6 +122,7 @@ details[open] summary { margin-bottom: 12px; }
 .row input[type="range"] { flex: 1; min-width: 0; width: 0; }
 select { min-height: 44px; max-width: 65%; padding: 5px 10px; color: var(--text); background: #1b2932; border: 1px solid var(--line); border-radius: 10px; font-size: 16px; }
 select:disabled { opacity: .35; }
+.panel-note { margin: 10px 0 0; color: var(--muted); font-size: 11px; line-height: 1.8; }
 input { accent-color: var(--accent); }
 .switch-row { justify-content: space-between; }
 input[type="checkbox"] { appearance: none; width: 34px; height: 20px; margin: 0; border-radius: 20px; background: #36434a; position: relative; cursor: pointer; }

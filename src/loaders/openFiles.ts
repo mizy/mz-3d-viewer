@@ -3,6 +3,7 @@ import type { FileBundle } from "./obj";
 import { createFileBundle, loadObj } from "./obj";
 import { loadStl } from "./stl";
 import { loadGltf } from "./gltf";
+import { loadThreeMf } from "./three-mf";
 import { loadCad, type CadQuality } from "./step";
 import type { CancelSignal, ModelFormat, ParsedModel, ProgressReporter } from "./types";
 
@@ -11,6 +12,7 @@ const EXTENSION_TO_FORMAT: Record<string, ModelFormat> = {
   obj: "obj",
   gltf: "gltf",
   glb: "gltf",
+  "3mf": "3mf",
   step: "step",
   stp: "step",
   iges: "iges",
@@ -55,6 +57,8 @@ export async function parseOne(file: File, allFiles: File[], context: OpenContex
       return loadObj(file, bundle);
     case "gltf":
       return loadGltf(await file.arrayBuffer(), file.name, context.renderer);
+    case "3mf":
+      return loadThreeMf(await file.arrayBuffer(), file.name);
     case "step":
     case "iges":
     case "brep":

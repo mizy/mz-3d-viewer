@@ -12,7 +12,8 @@
     "serve:dist": "node scripts/serve-dist.mjs",
     "verify": "node scripts/verify-site.mjs",
     "verify:tools": "node scripts/verify-viewer-tools.mjs",
-    "icons": "python3 scripts/make-icons.py"
+    "icons": "python3 scripts/make-icons.py",
+    "samples:3mf": "python3 scripts/make-3mf-samples.py"
   },
   "dependencies": {
     "occt-import-js": "^0.0.23",

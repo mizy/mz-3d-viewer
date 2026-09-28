@@ -1,4 +1,5 @@
-import type { Stage, DisplayStyle, MeasurementUnit, SectionAxis } from "../viewer/stage";
+import type { Stage, DisplayStyle, MeasurementUnit, SectionAxis, ControllerKind } from "../viewer/stage";
+import { CONTROLLER_LABEL, isControllerKind } from "../viewer/controller";
 import { createEntities } from "./entities";
 import { createNavCube } from "./navCube";
 import { createDemo } from "../viewer/demo";
@@ -15,18 +16,20 @@ type ToastKind = "info" | "warn" | "error";
 
 const UNIT_LABEL: Record<MeasurementUnit, string> = { mm: "mm", cm: "cm", m: "m", in: "in" };
 
-function el<T extends HTMLElement>(id: string): T {
+/** Looks up a required element by id; the caller asserts its concrete type (SVG elements included). */
+function el<T extends Element>(id: string): T {
   const node = document.getElementById(id);
   if (node === null) {
     throw new Error(`缺少必需的界面元素 #${id}`);
   }
-  return node as T;
+  return node as unknown as T;
 }
 
 const FORMAT_TITLES: Record<string, string> = {
   stl: "STL",
   obj: "OBJ",
   gltf: "glTF",
+  "3mf": "3MF",
   step: "STEP",
   iges: "IGES",
   brep: "BREP"
@@ -50,7 +53,6 @@ export function createApp(stage: Stage, backend: Backend, forceWebGL: boolean): 
   const explodeBtn = el<HTMLButtonElement>("explodeBtn");
   const styleBtn = el<HTMLButtonElement>("styleBtn");
   const fileInput = el<HTMLInputElement>("fileInput");
-  const stageEl = el<HTMLElement>("stage");
   const dropHint = el<HTMLDivElement>("dropHint");
   const dragOverlay = el<HTMLDivElement>("dragOverlay");
   const progressWrap = el<HTMLDivElement>("progressWrap");
@@ -70,6 +72,7 @@ export function createApp(stage: Stage, backend: Backend, forceWebGL: boolean): 
   const unitSelect = el<HTMLSelectElement>("unitSelect");
   const edgeAngleSelect = el<HTMLSelectElement>("edgeAngleSelect");
   const cadQualitySelect = el<HTMLSelectElement>("cadQualitySelect");
+  const controllerSelect = el<HTMLSelectElement>("controllerSelect");
   const styleSolid = el<HTMLInputElement>("styleSolid");
   const styleEdges = el<HTMLInputElement>("styleEdges");
   const styleWireframe = el<HTMLInputElement>("styleWireframe");
@@ -282,6 +285,7 @@ export function createApp(stage: Stage, backend: Backend, forceWebGL: boolean): 
 
     try {
       let opened = 0;
+      const notes: string[] = [];
       for (const file of primaries) {
         if (signal.cancelled) {
           break;
@@ -300,16 +304,17 @@ export function createApp(stage: Stage, backend: Backend, forceWebGL: boolean): 
         stage.setBytes(handle.id, file.size);
         stage.fitToActive();
         opened += 1;
-        for (const warning of parsed.warnings) {
-          toast(warning, "warn", 7000);
-        }
+        notes.push(...parsed.warnings);
       }
 
       if (signal.cancelled) {
         toast("已取消", "warn");
       } else if (opened > 0) {
         setSidebarOpen(false);
-        toast(opened === 1 ? `已打开 ${primaries[0].name}` : `已打开 ${opened} 个模型`);
+        // Loader notes ride along with the confirmation: toasting them separately let the
+        // confirmation overwrite them in the same tick, so the user never saw them at all.
+        const summary = opened === 1 ? `已打开 ${primaries[0].name}` : `已打开 ${opened} 个模型`;
+        toast(notes.length === 0 ? summary : `${summary} · ${notes.join(" · ")}`, notes.length === 0 ? "info" : "warn", notes.length === 0 ? 4000 : 9000);
       }
       // Edge lines are stale as soon as the model set changes.
       await stage.setDisplayStyle(stage.style, reportEdgeProgress);
@@ -393,6 +398,29 @@ export function createApp(stage: Stage, backend: Backend, forceWebGL: boolean): 
       toast(`CAD 精度：${CAD_QUALITY_PRESETS[value].label}（下次打开 CAD 文件生效）`);
     }
   });
+
+  // ------------------------------------------------------------------ camera controller
+
+  /** The one remembered preference: how this person likes to move the camera, not a property of a file. */
+  function applyController(kind: ControllerKind, announce: boolean): void {
+    stage.setController(kind);
+    controllerSelect.value = kind;
+    storeController(kind);
+    if (announce) {
+      toast(`相机控制器：${CONTROLLER_LABEL[kind]}`, "info", 2500);
+    }
+  }
+
+  controllerSelect.addEventListener("change", () => {
+    if (isControllerKind(controllerSelect.value)) {
+      applyController(controllerSelect.value, true);
+    }
+  });
+
+  const rememberedController = readStoredController();
+  if (rememberedController !== null) {
+    applyController(rememberedController, false);
+  }
 
   // ------------------------------------------------------------------ buttons
 
@@ -480,7 +508,7 @@ export function createApp(stage: Stage, backend: Backend, forceWebGL: boolean): 
     if (event.clientY - sheetStartY > 65) setSidebarOpen(false);
   });
 
-  createNavCube(stage, el<HTMLElement>("navCube"));
+  createNavCube(stage, el<HTMLElement>("navCube"), el<SVGSVGElement>("axisGizmo"));
   el<HTMLButtonElement>("isoBtn").addEventListener("click", () => stage.setStandardView("iso"));
   explodeRange.addEventListener("input", () => {
     stage.setExplode(Number(explodeRange.value) / 100);
@@ -505,28 +533,58 @@ export function createApp(stage: Stage, backend: Backend, forceWebGL: boolean): 
 
   // ------------------------------------------------------------------ drag & drop
 
+  /**
+   * A dropped file loads from anywhere in the window, not just over the canvas. Without a
+   * window-level preventDefault the browser's own "open this file" default takes over everywhere
+   * outside #stage, which replaces the viewer with the dropped file.
+   */
   let dragDepth = 0;
-  stageEl.addEventListener("dragenter", (event) => {
+  const dragsFiles = (event: DragEvent): boolean =>
+    event.dataTransfer !== null && [...event.dataTransfer.types].includes("Files");
+
+  function resetDrag(): void {
+    dragDepth = 0;
+    dragOverlay.hidden = true;
+  }
+
+  window.addEventListener("dragenter", (event) => {
+    if (!dragsFiles(event)) {
+      return;
+    }
     event.preventDefault();
     dragDepth += 1;
+    // The workspace panel lives in the top layer, so it would hide the overlay it sits behind.
+    if (sidebar.open) {
+      setSidebarOpen(false);
+    }
     dragOverlay.hidden = false;
   });
-  stageEl.addEventListener("dragover", (event) => {
+  window.addEventListener("dragover", (event) => {
+    if (!dragsFiles(event)) {
+      return;
+    }
     event.preventDefault();
+    if (event.dataTransfer !== null) {
+      event.dataTransfer.dropEffect = "copy";
+    }
   });
-  stageEl.addEventListener("dragleave", () => {
+  window.addEventListener("dragleave", () => {
     dragDepth = Math.max(0, dragDepth - 1);
     if (dragDepth === 0) {
       dragOverlay.hidden = true;
     }
   });
-  stageEl.addEventListener("drop", (event) => {
+  window.addEventListener("drop", (event) => {
+    const files = dragsFiles(event) ? [...(event.dataTransfer?.files ?? [])] : [];
+    resetDrag();
+    if (files.length === 0) {
+      return;
+    }
     event.preventDefault();
-    dragDepth = 0;
-    dragOverlay.hidden = true;
-    const files = event.dataTransfer === null ? [] : [...event.dataTransfer.files];
     void openFiles(files);
   });
+  // A drag that leaves the window never reports its final dragleave.
+  window.addEventListener("blur", resetDrag);
 
   window.addEventListener("keydown", (event) => {
     if (sidebar.open || event.target instanceof HTMLInputElement || event.target instanceof HTMLSelectElement) {
@@ -560,6 +618,7 @@ export function createApp(stage: Stage, backend: Backend, forceWebGL: boolean): 
     backend,
     capture: () => stage.captureNextFrame(),
     cadEngine: () => cadEngineState,
+    setController: (kind) => applyController(kind, false),
     summary: () => ({
       models: stage.modelList.map((handle) => ({
         id: handle.id,
@@ -574,6 +633,7 @@ export function createApp(stage: Stage, backend: Backend, forceWebGL: boolean): 
       style: stage.style,
       gridVisible: gridToggle.checked,
       sectionEnabled: sectionToggle.checked,
+      controller: stage.controllerKind,
       backend,
       build,
       cadEngineStatus: cadEngineState.status
@@ -591,4 +651,23 @@ export function createApp(stage: Stage, backend: Backend, forceWebGL: boolean): 
 function stripExtension(name: string): string {
   const dot = name.lastIndexOf(".");
   return dot <= 0 ? name : name.slice(0, dot);
+}
+
+const CONTROLLER_STORAGE_KEY = "mz-3d-viewer.controller";
+
+function readStoredController(): ControllerKind | null {
+  try {
+    const value = localStorage.getItem(CONTROLLER_STORAGE_KEY);
+    return value !== null && isControllerKind(value) ? value : null;
+  } catch {
+    return null;
+  }
+}
+
+function storeController(kind: ControllerKind): void {
+  try {
+    localStorage.setItem(CONTROLLER_STORAGE_KEY, kind);
+  } catch {
+    // Private mode or a partitioned storage block: navigation still works, it just forgets.
+  }
 }

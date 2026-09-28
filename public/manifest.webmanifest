@@ -23,6 +23,7 @@
         "model/obj": [".obj"],
         "model/gltf-binary": [".glb"],
         "model/gltf+json": [".gltf"],
+        "model/3mf": [".3mf"],
         "application/step": [".step", ".stp"],
         "model/iges": [".iges", ".igs"],
         "model/brep": [".brep"]

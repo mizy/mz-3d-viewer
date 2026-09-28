@@ -75,6 +75,8 @@ const sample = {
   stlCube: path.join(samples, "stl", "cube-10x10.stl"),
   obj: [path.join(samples, "obj", "cube.obj"), path.join(samples, "obj", "cube.mtl"), path.join(samples, "obj", "cube-texture.png")],
   glb: path.join(samples, "gltf", "Duck.glb"),
+  mf: path.join(samples, "3mf", "cube-10x10.3mf"),
+  mfInch: path.join(samples, "3mf", "inches.3mf"),
   step: path.join(samples, "step", "conical-surface.step"),
   iges: path.join(samples, "iges", "cube-10x10.igs"),
   brep: path.join(samples, "brep", "as1_pe_203.brep")
@@ -250,6 +252,21 @@ const stepFrame = await signature();
 const stepDiff = diffRatio(stepFrame, await baselineFrame());
 check("STEP 加载并渲染（OpenCascade wasm）", stepSummary.models[0]?.format === "step" && stepSummary.models[0]?.triangles > 100 && stepDiff > 0.02,
   `tri=${stepSummary.models[0]?.triangles} 模型占画面 ${(stepDiff * 100).toFixed(1)}%`);
+
+await boot();
+const mfSummary = await loadSample([sample.mf]);
+const mfFrame = await signature();
+const mfDiff = diffRatio(mfFrame, await baselineFrame());
+check("3MF 加载并渲染（ZIP 包）", mfSummary.models[0]?.format === "3mf" && mfSummary.models[0]?.triangles === 12 && mfDiff > 0.02,
+  `tri=${mfSummary.models[0]?.triangles} 模型占画面 ${(mfDiff * 100).toFixed(1)}%`);
+
+// The same 20mm cube declared in inches has to reach the readout as 508mm, with the note visible.
+await boot();
+const mfInchSummary = await loadSample([sample.mfInch]);
+const mfInchToast = (await page.textContent("#toast")) ?? "";
+check("3MF 声明的单位折算为毫米",
+  mfInchSummary.models[0]?.sizeMm.every((millimetres) => Math.abs(millimetres - 508) < 1) && mfInchToast.includes("×25.4"),
+  `sizeMm=${mfInchSummary.models[0]?.sizeMm.join(" × ")} toast=${mfInchToast.slice(0, 70)}`);
 
 await boot();
 const igesSummary = await loadSample([sample.iges]);

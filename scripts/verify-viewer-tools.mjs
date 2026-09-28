@@ -2,8 +2,10 @@
  * Usage: node scripts/verify-viewer-tools.mjs [--url=http://localhost:8899/]
  */
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import { chromium } from "playwright";
 const url = process.argv.find((arg) => arg.startsWith("--url="))?.slice(6) ?? "http://localhost:8899/";
+const stlBase64 = readFileSync(new URL("../samples/stl/cube-10x10.stl", import.meta.url)).toString("base64");
 const browser = await chromium.launch({ channel: "chrome", headless: true });
 const errors = [];
 try {
@@ -87,12 +89,18 @@ try {
     await page.locator("#styleBtn").tap();
     assert(await page.evaluate(() => {
       const model = window.__mzViewer.stage.active;
-      return window.__mzViewer.stage.style === "xray" && model.appearance.surfaces.every(({ mesh }) => mesh.material.transparent && !mesh.material.depthWrite && mesh.material.opacity < 0.3);
+      return window.__mzViewer.stage.style === "xray" && model.appearance.surfaces.every(({ mesh }) => mesh.material.transparent && !mesh.material.depthWrite && mesh.material.opacity <= 0.3);
     }), "X-ray shows translucent surfaces");
     await page.locator("#entitiesBtn").tap();
     await page.locator(".entity-name").tap();
     await page.locator("#clearPartBtn").tap();
-    assert(await page.evaluate(() => window.__mzViewer.stage.active.appearance.surfaces.every(({ mesh }) => mesh.material === window.__mzViewer.stage.active.appearance.xray)), "clearing X-ray selection restores X-ray");
+    // X-ray materials are per imported material (colors are preserved), so the restored material
+    // is the one looked up in `appearance.xray` rather than a single shared material.
+    assert(await page.evaluate(() => {
+      const appearance = window.__mzViewer.stage.active.appearance;
+      return appearance.surfaces.every(({ mesh, material }) => (Array.isArray(material) ? material : [material])
+        .every((original, index) => (Array.isArray(mesh.material) ? mesh.material : [mesh.material])[index] === appearance.xray.get(original)));
+    }), "clearing X-ray selection restores X-ray");
     await page.locator("#entitiesClose").tap();
     await page.locator("#styleBtn").tap();
     assert(await page.evaluate(() => window.__mzViewer.stage.active.appearance.surfaces.every((surface) => surface.mesh.material === surface.material)), "leaving X-ray restores imported materials");
@@ -144,6 +152,28 @@ try {
       const stage = window.__mzViewer.stage;
       return stage.camera.position.clone().sub(stage.controls.target).normalize().x < -0.999;
     }), "reduced motion uses immediate view switching");
+
+    // The axis triad is the camera's own basis projected to screen space: a standard view puts a
+    // different axis at the centre, and the axis pointing at the eye is the bright, unoccluded one.
+    const axisLabel = (axis) => page.evaluate((axis) => {
+      const label = document.querySelector(`#axisGizmo .axis-label.axis-${axis}`);
+      return { x: Number(label.getAttribute("x")), y: Number(label.getAttribute("y")), opacity: Number(label.getAttribute("opacity")) };
+    }, axis);
+    const centred = (label) => Math.hypot(label.x - 22, label.y - 22) < 1.5;
+    await page.locator("#navCube").press("1");
+    await page.waitForTimeout(60);
+    const frontAxes = { x: await axisLabel("x"), y: await axisLabel("y"), z: await axisLabel("z") };
+    assert(frontAxes.x.x > 34 && Math.abs(frontAxes.x.y - 22) < 1.5, "front view points the X axis right");
+    assert(frontAxes.y.y < 10 && Math.abs(frontAxes.y.x - 22) < 1.5, "front view points the Y axis up");
+    assert(centred(frontAxes.z) && frontAxes.z.opacity > 0.95 && frontAxes.x.opacity < 0.8, "front view centres Z and lights the near axis");
+    await page.locator("#navCube").press("5");
+    await page.waitForTimeout(60);
+    const topAxes = { x: await axisLabel("x"), y: await axisLabel("y"), z: await axisLabel("z") };
+    assert(centred(topAxes.y) && topAxes.y.opacity > 0.95, "top view centres the Y axis");
+    assert(topAxes.z.y > 34 && Math.abs(topAxes.z.x - 22) < 1.5, "top view points the Z axis down");
+    console.log("  ✓ axis triad follows the camera");
+    await page.locator("#navCube").press("3");
+
     await page.emulateMedia({ reducedMotion: "no-preference" });
     await page.locator("#isoBtn").tap();
     const cube = await page.locator("#navCube").boundingBox();
@@ -170,6 +200,63 @@ try {
     await page.waitForTimeout(150);
     assert(await page.evaluate(() => window.__mzViewer.stage.camera.position.distanceTo(window.__mzViewer.stage.controls.target)) < distance, "pinch zoom");
 
+    // Every controller must honour the same framing, NavCube and gesture contract.
+    if (width === 1440) {
+      const direction = () => page.evaluate(() => {
+        const stage = window.__mzViewer.stage;
+        return stage.camera.position.clone().sub(stage.controls.target).normalize().toArray();
+      });
+      for (const kind of ["arcball", "trackball"]) {
+        await page.evaluate((value) => window.__mzViewer.setController(value), kind);
+        assert.equal(await page.evaluate(() => window.__mzViewer.summary().controller), kind, `${kind} is the active controller`);
+
+        for (const [key, axis, sign] of [["1", "z", 1], ["2", "z", -1], ["3", "x", -1], ["4", "x", 1], ["5", "y", 1], ["6", "y", -1]]) {
+          await page.locator("#navCube").press(key);
+          await page.waitForFunction(({ axis, sign }) => {
+            const stage = window.__mzViewer.stage;
+            return stage.camera.position.clone().sub(stage.controls.target).normalize()[axis] * sign > 0.99999;
+          }, { axis, sign });
+          const face = await direction();
+          assert(face[["x", "y", "z"].indexOf(axis)] * sign > 0.99, `${kind} cube face ${key}`);
+        }
+
+        // The first drag after a scripted view must continue from that view. A controller that
+        // rebuilds the pose from a cached matrix instead snaps back to the pre-script pose, which
+        // here would be the bottom view rather than the front one.
+        await page.locator("#navCube").press("1");
+        await page.waitForFunction(() => {
+          const stage = window.__mzViewer.stage;
+          return stage.camera.position.clone().sub(stage.controls.target).normalize().z > 0.99999;
+        });
+        const canvasBox = await page.locator("#view").boundingBox();
+        const originX = canvasBox.x + canvasBox.width / 2, originY = canvasBox.y + canvasBox.height / 2;
+        await page.mouse.move(originX, originY);
+        await page.mouse.down();
+        await page.mouse.move(originX + 34, originY + 14, { steps: 6 });
+        await page.mouse.up();
+        await page.waitForTimeout(350);
+        const dragged = await direction();
+        assert(dragged[2] > 0.9, `${kind} drag continues from the scripted view, not a stale cached pose`);
+        assert(dragged[2] < 0.9999, `${kind} drag rotates the camera`);
+
+        const beforeTouch = await page.evaluate(() => window.__mzViewer.stage.camera.position.toArray());
+        await cdp.send("Input.dispatchTouchEvent", { type: "touchStart", touchPoints: [{ x: width / 2, y: height * 0.43, id: 0 }] });
+        await cdp.send("Input.dispatchTouchEvent", { type: "touchMove", touchPoints: [{ x: width / 2 + 60, y: height * 0.43 + 25, id: 0 }] });
+        await cdp.send("Input.dispatchTouchEvent", { type: "touchEnd", touchPoints: [] });
+        await page.waitForTimeout(250);
+        assert.notDeepEqual(await page.evaluate(() => window.__mzViewer.stage.camera.position.toArray()), beforeTouch, `${kind} single finger rotate`);
+
+        const radius = await page.evaluate(() => window.__mzViewer.stage.camera.position.distanceTo(window.__mzViewer.stage.controls.target));
+        await cdp.send("Input.dispatchTouchEvent", { type: "touchStart", touchPoints: [{ x: width / 2 - 20, y: height * 0.43, id: 0 }, { x: width / 2 + 20, y: height * 0.43, id: 1 }] });
+        await cdp.send("Input.dispatchTouchEvent", { type: "touchMove", touchPoints: [{ x: width / 2 - 60, y: height * 0.43, id: 0 }, { x: width / 2 + 60, y: height * 0.43, id: 1 }] });
+        await cdp.send("Input.dispatchTouchEvent", { type: "touchEnd", touchPoints: [] });
+        await page.waitForTimeout(250);
+        assert(await page.evaluate(() => window.__mzViewer.stage.camera.position.distanceTo(window.__mzViewer.stage.controls.target)) < radius, `${kind} pinch zoom`);
+        console.log(`  ✓ ${kind}: cube faces, post-script drag, touch rotate, pinch`);
+      }
+      await page.evaluate(() => window.__mzViewer.setController("orbit"));
+    }
+
     await page.locator("#sidebarToggle").tap();
     await page.locator("#sectionDetails summary").tap();
     await page.locator("#sectionToggle").check();
@@ -186,6 +273,56 @@ try {
     await page.locator('#modelList button[title="移除"]').tap();
     await page.locator("#sidebarClose").tap();
     assert(await page.locator("#demoBtn").isVisible(), "empty state after removal");
+
+    if (width === 1440) {
+      // A file dropped anywhere in the window has to load: without a window-level preventDefault
+      // the browser's own "open this file" default replaces the viewer instead.
+      const dragDispatch = (selector, types) => page.evaluate(({ selector, types, b64 }) => {
+        const transfer = new DataTransfer();
+        transfer.items.add(new File([Uint8Array.from(atob(b64), (character) => character.charCodeAt(0))], "cube-10x10.stl", { type: "model/stl" }));
+        const target = selector === "window" ? window : document.querySelector(selector);
+        return types.map((type) => {
+          const event = new DragEvent(type, { bubbles: true, cancelable: true, dataTransfer: transfer });
+          target.dispatchEvent(event);
+          return event.defaultPrevented;
+        });
+      }, { selector, types, b64: stlBase64 });
+
+      await page.locator("#sidebarToggle").tap();
+      await dragDispatch("window", ["dragenter"]);
+      await page.waitForTimeout(80);
+      assert.equal(await page.locator("#settingsPanel").isVisible(), false, "dragging files in closes the workspace panel");
+      assert.equal(await page.locator("#dragOverlay").isVisible(), true, "the drop target covers the whole window");
+      await dragDispatch("window", ["dragleave"]);
+      await page.waitForTimeout(80);
+      assert.equal(await page.locator("#dragOverlay").isVisible(), false, "leaving the window clears the drop target");
+
+      for (const selector of ["header", ".tool-dock", "body"]) {
+        const before = await page.evaluate(() => window.__mzViewer.stage.modelList.length);
+        const prevented = await dragDispatch(selector, ["dragenter", "dragover", "drop"]);
+        assert(prevented.every(Boolean), `a drop on ${selector} cancels the browser default`);
+        await page.waitForFunction((count) => window.__mzViewer.stage.modelList.length > count, before);
+        await page.waitForFunction(() => document.getElementById("progressWrap").hidden);
+      }
+      assert.equal(await page.evaluate(() => window.__mzViewer.stage.modelList.length), 3, "drops outside the canvas load the file");
+      console.log("  ✓ dropping a file anywhere in the window loads it");
+
+      // The picker is the real UI path, and the choice is meant to outlive a reload.
+      await page.locator("#sidebarToggle").tap();
+      await page.locator("#cameraDetails summary").tap();
+      await page.locator("#controllerSelect").selectOption("arcball");
+      assert.equal(await page.evaluate(() => window.__mzViewer.summary().controller), "arcball", "sidebar pick switches the controller");
+      await page.keyboard.press("Escape");
+      await page.reload();
+      await page.waitForFunction(() => window.__mzViewer !== undefined);
+      assert.equal(await page.evaluate(() => window.__mzViewer.summary().controller), "arcball", "controller choice survives a reload");
+      await page.locator("#sidebarToggle").tap();
+      await page.locator("#cameraDetails summary").tap();
+      assert.equal(await page.locator("#controllerSelect").inputValue(), "arcball", "select reflects the remembered controller");
+      await page.locator("#controllerSelect").selectOption("orbit");
+      await page.keyboard.press("Escape");
+      console.log("  ✓ controller pick is remembered across a reload");
+    }
 
     if (width === 390) {
       // A nested, scaled import with a manual matrix must survive explode / reassembly.
@@ -220,6 +357,16 @@ try {
       await page.locator("#explodeBtn").tap();
       assert(await page.locator("#explodeHint").isVisible(), "single mesh explanation is accessible on touch");
       assert(await page.locator("#explodeRange").isDisabled(), "single mesh cannot explode");
+
+      // A phone swaps the controller too, after the viewport has already been resized.
+      await page.evaluate(() => window.__mzViewer.setController("arcball"));
+      const phoneBefore = await page.evaluate(() => window.__mzViewer.stage.camera.position.toArray());
+      await cdp.send("Input.dispatchTouchEvent", { type: "touchStart", touchPoints: [{ x: width / 2, y: height * 0.43, id: 0 }] });
+      await cdp.send("Input.dispatchTouchEvent", { type: "touchMove", touchPoints: [{ x: width / 2 + 44, y: height * 0.43 + 30, id: 0 }] });
+      await cdp.send("Input.dispatchTouchEvent", { type: "touchEnd", touchPoints: [] });
+      await page.waitForTimeout(250);
+      assert.notDeepEqual(await page.evaluate(() => window.__mzViewer.stage.camera.position.toArray()), phoneBefore, "narrow viewport rotates with the arcball controller");
+      await page.evaluate(() => window.__mzViewer.setController("orbit"));
     }
     console.log(`✓ ${width}×${height}: animated explode, X-ray, entities, restore, edges, NavCube, touch, section, layout`);
     await context.close();

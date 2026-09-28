@@ -1,9 +1,10 @@
 import * as THREE from "three/webgpu";
-import { OrbitControls } from "three/addons/controls/OrbitControls.js";
+import { ControllerHost, type ControllerKind } from "./controller";
 import { collectParts, explodeParts, type ExplodePart } from "./explode";
 import type { ParsedModel } from "../loaders/types";
 import { createAppearance, applyAppearance, disposeAppearance, type ModelAppearance, type DisplayStyle } from "./appearance";
 export type { DisplayStyle } from "./appearance";
+export type { ControllerKind } from "./controller";
 export type StandardView = "front" | "back" | "left" | "right" | "top" | "bottom" | "iso";
 export type MeasurementUnit = "mm" | "cm" | "m" | "in";
 export type SectionAxis = "x" | "y" | "z";
@@ -63,7 +64,8 @@ export class Stage {
   readonly renderer: THREE.WebGPURenderer;
   readonly scene = new THREE.Scene();
   readonly camera: THREE.PerspectiveCamera;
-  readonly controls: OrbitControls;
+  /** Stable across controller switches: NavCube and the acceptance scripts hold on to it. */
+  readonly controls: ControllerHost;
 
   private readonly canvas: HTMLCanvasElement;
   private readonly grid: THREE.GridHelper;
@@ -112,11 +114,12 @@ export class Stage {
     this.camera.position.set(70, 55, 70);
     this.camera.lookAt(0, 0, 0);
 
-    this.controls = new OrbitControls(this.camera, canvas);
-    this.controls.enableDamping = true;
-    this.controls.dampingFactor = 0.12;
-    this.controls.screenSpacePanning = true;
-    this.controls.addEventListener("start", () => { this.viewTransition = null; });
+    this.controls = new ControllerHost(this.camera, canvas, this.scene, "orbit");
+    // Any direct canvas gesture takes over from a scripted transition, whatever controller is
+    // active (OrbitControls' own "start" event has no equivalent on the other two).
+    const interrupt = (): void => { this.viewTransition = null; };
+    canvas.addEventListener("pointerdown", interrupt);
+    canvas.addEventListener("wheel", interrupt, { passive: true });
 
     this.renderer.setAnimationLoop(() => this.renderFrame());
   }
@@ -409,6 +412,20 @@ export class Stage {
     this.grid.visible = visible;
   }
 
+  get controllerKind(): ControllerKind {
+    return this.controls.kind;
+  }
+
+  /** Swaps the camera navigation model, keeping the current pose and focal point. */
+  setController(kind: ControllerKind): void {
+    if (kind === this.controls.kind) {
+      return;
+    }
+    this.viewTransition = null;
+    this.controls.settle();
+    this.controls.setKind(kind);
+  }
+
   setSection(enabled: boolean, axis: SectionAxis, ratio: number): void {
     this.sectionEnabled = enabled;
     this.sectionAxis = axis;
@@ -472,6 +489,7 @@ export class Stage {
     this.camera.updateProjectionMatrix();
     this.grid.position.set(sphere.center.x, box.min.y, sphere.center.z);
     this.controls.update();
+    this.controls.syncCamera();
   }
 
   setStandardView(view: StandardView, animate = true): void {
@@ -493,11 +511,8 @@ export class Stage {
     const rotation = new THREE.Quaternion().setFromRotationMatrix(
       new THREE.Matrix4().lookAt(direction, new THREE.Vector3(), up)
     );
-    // Drain orbit inertia before handing the camera to the transition.
-    const damping = this.controls.enableDamping;
-    this.controls.enableDamping = false;
-    this.controls.update();
-    this.controls.enableDamping = damping;
+    // Drain any pending inertia before handing the camera to the transition.
+    this.controls.settle();
     this.viewTransition = null;
     if (animate && !window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
       this.viewTransition = {
@@ -514,14 +529,13 @@ export class Stage {
     this.camera.near = Math.max(radius / 1000, 0.01);
     this.camera.far = Math.max(distance, this.viewTransition?.fromDistance ?? distance) + radius * 20;
     this.camera.updateProjectionMatrix();
+    this.controls.syncCamera();
   }
 
   /** Direct cube dragging interrupts a pending snap at its current pose. */
   rotateView(horizontal: number, vertical: number): void {
     this.viewTransition = null;
-    this.controls.rotateLeft(horizontal);
-    this.controls.rotateUp(vertical);
-    this.controls.update();
+    this.controls.rotateView(horizontal, vertical);
   }
 
   // ---------------------------------------------------------------- frame loop
@@ -534,6 +548,7 @@ export class Stage {
     this.renderer.setSize(width, height, false);
     this.camera.aspect = width / height;
     this.camera.updateProjectionMatrix();
+    this.controls.handleResize();
   }
 
   /** Captures the very next rendered frame. Reading the canvas after the frame is what makes this reliable on WebGPU. */
@@ -564,9 +579,14 @@ export class Stage {
         this.camera.up.copy(transition.up);
         this.viewTransition = null;
         this.controls.update();
+        this.controls.syncCamera();
+      } else {
+        // Keep controllers that cache the camera matrix in step with the animated pose, so the
+        // first drag after the transition does not rebuild it from the pre-transition pose.
+        this.controls.syncCamera();
       }
       // NavCube listens to this same event during both orbit gestures and animated snaps.
-      this.controls.dispatchEvent({ type: "change" });
+      this.controls.notifyChange();
     } else this.controls.update();
     this.renderer.render(this.scene, this.camera);
     if (this.captureResolve !== null) {

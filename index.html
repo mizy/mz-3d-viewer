@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
-<title>3D 模型查看器 · STL / OBJ / glTF / STEP</title>
+<title>3D 模型查看器 · STL / OBJ / glTF / 3MF / STEP</title>
 <meta name="description" content="WebGPU 加速的本地 3D 模型查看器，支持 STL、OBJ、glTF、STEP。模型不上传，全部在浏览器本地解析。" />
 <meta name="theme-color" content="#090d12" />
 <meta name="x-build" content="dev" />
@@ -26,7 +26,7 @@
         <p>打开模型，旋转、拆解，发现更多。</p>
         <button id="emptyOpenBtn" class="btn btn-primary" type="button">选择模型 <svg class="icon" aria-hidden="true"><use href="#i-arrow"/></svg></button>
         <button id="demoBtn" class="text-btn" type="button">体验装配示例 <span>↗</span></button>
-        <span class="format-list">STL / OBJ / GLB / STEP / IGES / BREP</span>
+        <span class="format-list">STL / OBJ / GLB / 3MF / STEP / IGES / BREP</span>
       </div>
     </div>
     <div id="dragOverlay" class="drag-overlay" hidden><span>释放文件，开始探索</span></div>
@@ -56,6 +56,14 @@
       </div>
     </div>
     <button id="isoBtn" class="nav-home" type="button" aria-label="等轴视图" title="等轴视图"><svg class="icon" aria-hidden="true"><use href="#i-home"/></svg></button>
+    <svg id="axisGizmo" class="axis-gizmo" viewBox="0 0 44 44" aria-hidden="true" focusable="false">
+      <line class="axis-arm axis-x" x1="22" y1="22" x2="22" y2="22" />
+      <line class="axis-arm axis-y" x1="22" y1="22" x2="22" y2="22" />
+      <line class="axis-arm axis-z" x1="22" y1="22" x2="22" y2="22" />
+      <text class="axis-label axis-x" x="22" y="22">X</text>
+      <text class="axis-label axis-y" x="22" y="22">Y</text>
+      <text class="axis-label axis-z" x="22" y="22">Z</text>
+    </svg>
   </div>
 
   <div id="explodePanel" class="explode-panel glass" popover="auto">
@@ -92,6 +100,14 @@
       </div>
       <label class="row switch-row">地板网格 <input type="checkbox" id="gridToggle" checked /></label>
     </section>
+    <details class="panel" id="cameraDetails"><summary>视角操作</summary>
+      <label class="row">控制器<select id="controllerSelect" aria-label="相机控制器">
+        <option value="orbit" selected>轨道 Orbit</option>
+        <option value="arcball">旋转球 Arcball</option>
+        <option value="trackball">轨迹球 Trackball</option>
+      </select></label>
+      <p class="panel-note">轨道围绕目标点旋转、上下受限；旋转球没有上下限制，可以连续翻转；轨迹球自由翻滚，接近传统 CAD 手感。选择会记住，画布拖动与 NavCube 在三种模式下都可用。</p>
+    </details>
     <details class="panel" id="sectionDetails"><summary>剖面分析</summary>
       <label class="row switch-row">启用剖面 <input type="checkbox" id="sectionToggle" /></label>
       <label class="row">方向<select id="sectionAxisSelect" disabled><option value="x">沿 X 切</option><option value="y">沿 Y 切</option><option value="z">沿 Z 切</option></select></label>
