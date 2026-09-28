@@ -14,13 +14,32 @@ pnpm install
 pnpm dev              # http://localhost:8899
 pnpm build            # vite build + dist/sw.js (precache manifest + build hash)
 pnpm serve:dist       # serve dist/ exactly like GitHub Pages (static, cache-control: max-age=600)
-pnpm verify           # 33-check acceptance run in real Chrome
+pnpm verify           # built-site acceptance run in real Chrome
+pnpm verify:tools     # touch, NavCube and explode checks against the running dev server
 pnpm typecheck
 ```
 
 `pnpm verify` needs a Chrome with WebGPU (macOS/Windows Chrome 113+). It serves the build at a
 sub-path (`/mz-3d-viewer/`) so the GitHub Pages layout is what gets tested. Flags: `--headless`,
 `--base=/`.
+
+## Viewer controls
+
+The canvas fills the screen. The floating dock opens the workspace, cycles display modes,
+separates assembly parts and fits the model. Advanced settings live in a native dialog;
+on phones it opens as a bottom sheet (swipe the heading down to close).
+
+- **NavCube:** tap a face for a 400ms eased camera/cube transition, or drag to take over immediately. Reduced-motion preferences skip the animation. Keyboard: arrows rotate, 1–6 select front/back/left/right/top/bottom, Home selects isometric.
+- **Explode:** first opening animates to 50%. Slider changes and fully separated / reassemble use a 400ms transition with matching camera framing; reopening preserves the chosen value. Offsets belong to the active model, edge lines follow the parts, and dimensions retain their assembled values.
+- **X-ray:** a translucent cyan inspection mode; leaving it restores imported materials. Selected parts stay highlighted.
+- **Entities:** search parts by their imported names, select/highlight, hide/show, isolate, restore all or frame a part. On mobile the list reserves its own space beneath the canvas.
+- **Parts:** independent mesh roots from the imported hierarchy. A single-mesh STL cannot be split into semantic components. No geometry is modified or guessed apart.
+- **Demo:** “体验装配示例” opens an 11-part local procedural assembly.
+- **Touch:** one finger rotates, two fingers pan/pinch. Mobile rendering caps pixel density at 1.5; framing accounts for narrow viewports.
+
+`pnpm verify:tools --url=http://localhost:8901/` can also test a running production preview.
+It covers four viewport sizes, actual touch events, exact reassembly under nested transforms,
+edge alignment, six cube faces, single-mesh handling and console/network errors.
 
 ## Architecture
 
@@ -31,6 +50,11 @@ sub-path (`/mz-3d-viewer/`) so the GitHub Pages layout is what gets tested. Flag
 | `src/viewer/stage.ts` | scene graph, camera, lights, grid, display modes, section, screenshot, render loop |
 | `src/loaders/*.ts` | one parser per format family, all returning `ParsedModel { root, warnings }` |
 | `src/loaders/step.ts` + `public/wasm/occt/step-worker.js` | OpenCascade wasm in a classic worker (7.6MB, never on the main thread) |
+| `src/viewer/explode.ts` | independent mesh discovery, original matrices and parent-local separation offsets; consumed by `Stage` |
+| `src/viewer/appearance.ts` | original mesh materials, X-ray and selection overrides; owned by each stage model |
+| `src/ui/entities.ts` | named part list and inspection controls; initialized by `createApp` |
+| `src/viewer/demo.ts` | procedural sample assembly used by the empty-state demo button |
+| `src/ui/navCube.ts` | camera-synced CSS cube and pointer/keyboard navigation; initialized by `createApp` |
 | `src/ui/app.ts` | DOM wiring only: files, list, settings, progress, stats, test hooks |
 | `src/pwa/register.ts` | service worker registration + update reload + OS file handlers |
 | `src/pwa/cadEngineWarm.ts` | page-driven download of the 7.6MB OpenCascade engine into the SW cache, verified byte-for-byte, skipped when already cached |
@@ -44,7 +68,7 @@ debugging a live deployment.
 
 ## Verification
 
-`pnpm verify` prints 35 checks; all of them run against a real Chrome and the built site served at
+`pnpm verify` prints its check results; all of them run against a real Chrome and the built site served at
 `/mz-3d-viewer/` (the Pages layout, relative asset paths and SW scope included). It covers: backend
 detection, every file format, render output measured against a model-hidden baseline frame, edge /
 wireframe / section / view / unit switches, model list operations, manifest + worker + cache contents,

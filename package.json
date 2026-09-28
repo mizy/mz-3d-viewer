@@ -11,6 +11,7 @@
     "preview": "vite preview --port 8901",
     "serve:dist": "node scripts/serve-dist.mjs",
     "verify": "node scripts/verify-site.mjs",
+    "verify:tools": "node scripts/verify-viewer-tools.mjs",
     "icons": "python3 scripts/make-icons.py"
   },
   "dependencies": {

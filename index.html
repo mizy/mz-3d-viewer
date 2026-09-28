@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
 <title>3D 模型查看器 · STL / OBJ / glTF / STEP</title>
 <meta name="description" content="WebGPU 加速的本地 3D 模型查看器，支持 STL、OBJ、glTF、STEP。模型不上传，全部在浏览器本地解析。" />
-<meta name="theme-color" content="#0e1116" />
+<meta name="theme-color" content="#090d12" />
 <meta name="x-build" content="dev" />
 <link rel="manifest" href="./manifest.webmanifest" />
 <link rel="icon" href="./icons/icon-192.png" />
@@ -13,109 +13,99 @@
 <link rel="stylesheet" href="./src/ui/styles.css" />
 </head>
 <body>
-<div class="app">
-  <header class="topbar">
-    <div class="brand">
-      <span class="brand-mark">3D</span>
-      <span class="brand-name">模型查看器</span>
-      <span id="backendBadge" class="badge badge-pending">渲染后端检测中…</span>
-    </div>
-    <div class="topbar-actions">
-      <button id="sidebarToggle" class="btn btn-small sidebar-toggle" type="button">面板</button>
-      <button id="openBtn" class="btn btn-primary" type="button">打开模型</button>
-      <button id="shotBtn" class="btn" type="button" disabled>截图</button>
-      <button id="fullscreenBtn" class="btn" type="button">全屏</button>
-    </div>
-  </header>
-
-  <aside class="sidebar">
-    <section class="panel">
-      <h2>模型</h2>
-      <ul id="modelList" class="model-list">
-        <li class="empty" id="modelListEmpty">还没有模型，把文件拖进右侧窗口</li>
-      </ul>
-    </section>
-
-    <section class="panel">
-      <h2>显示</h2>
-      <div class="row" role="radiogroup" aria-label="显示模式">
-        <label class="chip"><input type="radio" name="style" id="styleSolid" checked />实体</label>
-        <label class="chip"><input type="radio" name="style" id="styleEdges" />带边线</label>
-        <label class="chip"><input type="radio" name="style" id="styleWireframe" />线框</label>
-      </div>
-      <label class="row"><input type="checkbox" id="gridToggle" checked />地板网格</label>
-      <label class="row"><input type="checkbox" id="sectionToggle" />剖面切开</label>
-      <label class="row">剖面方向
-        <select id="sectionAxisSelect" disabled>
-          <option value="x" selected>沿 X 切</option>
-          <option value="y">沿 Y 切</option>
-          <option value="z">沿 Z 切</option>
-        </select>
-      </label>
-      <label class="row row-range">剖面位置 <input type="range" id="sectionOffset" min="0" max="100" value="50" disabled /></label>
-      <label class="row">单位
-        <select id="unitSelect">
-          <option value="mm" selected>毫米 mm</option>
-          <option value="cm">厘米 cm</option>
-          <option value="m">米 m</option>
-          <option value="in">英寸 in</option>
-        </select>
-      </label>
-      <label class="row">CAD 精度
-        <select id="cadQualitySelect">
-          <option value="fast">快速（大装配体）</option>
-          <option value="standard" selected>标准</option>
-          <option value="fine">精细（小零件）</option>
-        </select>
-      </label>
-      <label class="row">边线角度
-        <select id="edgeAngleSelect">
-          <option value="15">15°（细节多）</option>
-          <option value="30" selected>30°（推荐）</option>
-          <option value="45">45°（细节少）</option>
-        </select>
-      </label>
-    </section>
-
-    <section class="panel">
-      <h2>信息</h2>
-      <dl id="statsBox" class="stats"><dt>状态</dt><dd id="statStatus">等待文件</dd></dl>
-    </section>
-
-    <footer class="sidebar-footer">
-      <div id="buildStamp" class="mono">build dev</div>
-      <div id="cadEngineState" class="mono">STEP 引擎：等待缓存</div>
-      <div class="hint">所有解析都在本机浏览器完成，文件不会上传。</div>
-    </footer>
-  </aside>
-
-  <main class="stage" id="stage">
-    <canvas id="view"></canvas>
+<svg class="icon-defs" aria-hidden="true"><defs><symbol id="i-cube" viewBox="0 0 24 24"><path d="M12 3 21 8v9l-9 5-9-5V8l9-5Z M3 8l9 5 9-5 M12 13v9"/></symbol><symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14 M5 12h14"/></symbol><symbol id="i-settings" viewBox="0 0 24 24"><path d="M4 7h16 M4 17h16 M8 4v6 M16 14v6"/></symbol><symbol id="i-layers" viewBox="0 0 24 24"><path d="m12 3 9 5-9 5-9-5 9-5Z M3 12l9 5 9-5 M3 16l9 5 9-5"/></symbol><symbol id="i-explode" viewBox="0 0 24 24"><path d="m12 8 5 4-5 4-5-4 5-4Z M12 2v3 M12 19v3 M2 7l3 2 M19 15l3 2 M2 17l3-2 M19 9l3-2"/></symbol><symbol id="i-fit" viewBox="0 0 24 24"><path d="M8 3H3v5 M16 3h5v5 M3 16v5h5 M21 16v5h-5 M8 12h8 M12 8v8"/></symbol><symbol id="i-close" viewBox="0 0 24 24"><path d="m6 6 12 12 M6 18 18 6"/></symbol><symbol id="i-arrow" viewBox="0 0 24 24"><path d="M5 12h14 m-6-6 6 6-6 6"/></symbol><symbol id="i-home" viewBox="0 0 24 24"><path d="m3 11 9-8 9 8 M5 10v11h5v-7h4v7h5V10"/></symbol><symbol id="i-lock" viewBox="0 0 24 24"><path d="M7 10V7a5 5 0 0 1 10 0v3 M5 10h14v11H5V10Z"/></symbol></defs></svg>
+<div class="app" id="app">
+  <main class="stage" id="stage" aria-label="3D 模型工作台">
+    <canvas id="view" aria-label="模型画布：单指旋转，双指缩放和平移"></canvas>
+    <div class="stage-vignette" aria-hidden="true"></div>
     <div id="dropHint" class="drop-hint">
       <div class="drop-hint-inner">
-        <strong>拖入模型文件</strong>
-        <span>STL · OBJ · glTF/GLB · STEP / IGES / BREP</span>
-        <span class="muted">OBJ 的贴图可以和 .obj/.mtl 一起多选拖入</span>
+        <div class="hero-object" aria-hidden="true"><div class="hero-orbit"></div><div class="hero-stack"><i></i><i></i><i></i></div></div>
+        <span class="eyebrow">A NEW PERSPECTIVE</span>
+        <h1>每一面，<br />都值得探索<span>。</span></h1>
+        <p>打开模型，旋转、拆解，发现更多。</p>
+        <button id="emptyOpenBtn" class="btn btn-primary" type="button">选择模型 <svg class="icon" aria-hidden="true"><use href="#i-arrow"/></svg></button>
+        <button id="demoBtn" class="text-btn" type="button">体验装配示例 <span>↗</span></button>
+        <span class="format-list">STL / OBJ / GLB / STEP / IGES / BREP</span>
       </div>
     </div>
-    <div id="dragOverlay" class="drag-overlay" hidden><span>松手即打开</span></div>
-    <div id="progressWrap" class="progress" hidden>
+    <div id="dragOverlay" class="drag-overlay" hidden><span>释放文件，开始探索</span></div>
+    <div id="progressWrap" class="progress glass" role="status" hidden>
       <div id="progressLabel" class="progress-label">解析中…</div>
+      <button id="cancelBtn" class="text-btn" type="button">取消</button>
       <div class="progress-track"><div id="progressBar" class="progress-bar"></div></div>
-      <button id="cancelBtn" class="btn btn-small" type="button">取消</button>
     </div>
-    <div class="view-panel" role="group" aria-label="标准视图">
-      <button class="btn btn-small" data-view="front" type="button">前</button>
-      <button class="btn btn-small" data-view="back" type="button">后</button>
-      <button class="btn btn-small" data-view="left" type="button">左</button>
-      <button class="btn btn-small" data-view="right" type="button">右</button>
-      <button class="btn btn-small" data-view="top" type="button">顶</button>
-      <button class="btn btn-small" data-view="bottom" type="button">底</button>
-      <button class="btn btn-small" data-view="iso" type="button">等轴</button>
-      <button class="btn btn-small btn-accent" id="fitBtn" type="button">适应</button>
-    </div>
-    <div id="toast" class="toast" hidden></div>
+    <div id="toast" class="toast glass" role="status" hidden></div>
   </main>
+
+  <header class="topbar">
+    <a class="brand" href="./" aria-label="MZ 3D 首页"><svg class="icon" aria-hidden="true"><use href="#i-cube"/></svg><span>MZ<span class="brand-light"> / 3D</span></span></a>
+    <div class="topbar-actions"><span class="local-label"><svg class="icon" aria-hidden="true"><use href="#i-lock"/></svg> 本地 · 私密</span><button id="openBtn" class="btn btn-open" type="button"><svg class="icon" aria-hidden="true"><use href="#i-plus"/></svg><span>打开模型</span></button></div>
+  </header>
+  <div class="model-caption"><span class="live-dot"></span><span id="activeName">无限视角，尽在本地。</span></div>
+
+  <div class="navigation" id="navigation" aria-label="视角导航">
+    <div id="navCube" class="navcube" tabindex="0" role="group" aria-label="导航立方体：拖动旋转，点击面切换视角。方向键旋转，数字 1 到 6 切换六面，Home 回到等轴视图。">
+      <div class="cube">
+        <button type="button" class="cube-face front" data-view="front" tabindex="-1" aria-label="前视图">前</button>
+        <button type="button" class="cube-face back" data-view="back" tabindex="-1" aria-label="后视图">后</button>
+        <button type="button" class="cube-face right" data-view="right" tabindex="-1" aria-label="右视图">右</button>
+        <button type="button" class="cube-face left" data-view="left" tabindex="-1" aria-label="左视图">左</button>
+        <button type="button" class="cube-face top" data-view="top" tabindex="-1" aria-label="顶视图">顶</button>
+        <button type="button" class="cube-face bottom" data-view="bottom" tabindex="-1" aria-label="底视图">底</button>
+      </div>
+    </div>
+    <button id="isoBtn" class="nav-home" type="button" aria-label="等轴视图" title="等轴视图"><svg class="icon" aria-hidden="true"><use href="#i-home"/></svg></button>
+  </div>
+
+  <div id="explodePanel" class="explode-panel glass" popover="auto">
+    <div class="explode-heading"><span>爆炸视图 <small id="partCount"></small></span><output id="explodeValue" for="explodeRange">0%</output></div>
+    <p id="explodeHint" class="explode-hint" hidden>这个模型只有一个网格，无法按部件拆分。可打开装配模型，或体验内置示例。</p>
+    <input id="explodeRange" type="range" min="0" max="100" value="0" aria-label="部件分离程度" />
+    <div class="explode-actions"><button id="assembleBtn" class="text-btn" type="button">还原装配</button><button id="separateBtn" class="text-btn" type="button">完全展开 ↗</button></div>
+  </div>
+  <aside id="entitiesPanel" class="entities-panel glass" aria-labelledby="entitiesTitle" hidden>
+    <div class="entities-heading"><h2 id="entitiesTitle">部件 <small>ENTITIES · <span id="entityCount">0</span></small></h2><button id="entitiesClose" class="icon-btn" type="button" aria-label="关闭部件列表">×</button></div>
+    <input id="entitySearch" type="search" placeholder="按部件名称搜索" aria-label="搜索部件" />
+    <ul id="entityList" class="entity-list"></ul>
+    <div class="entities-actions"><button id="isolatePartBtn" class="text-btn" type="button" disabled>只看选中</button><button id="showPartsBtn" class="text-btn" type="button">全部显示</button><button id="clearPartBtn" class="text-btn" type="button" disabled>取消选择</button></div>
+  </aside>
+  <nav class="tool-dock glass" aria-label="模型工具">
+    <button id="sidebarToggle" class="dock-btn" type="button" aria-controls="settingsPanel" aria-expanded="false"><svg class="icon" aria-hidden="true"><use href="#i-settings"/></svg><span>工具</span></button>
+    <button id="entitiesBtn" class="dock-btn" type="button" aria-controls="entitiesPanel" aria-expanded="false" disabled><svg class="icon" aria-hidden="true"><use href="#i-cube"/></svg><span>部件</span></button>
+    <button id="styleBtn" class="dock-btn" type="button" disabled><svg class="icon" aria-hidden="true"><use href="#i-layers"/></svg><span id="styleLabel">实体</span></button>
+    <button id="explodeBtn" class="dock-btn" type="button" popovertarget="explodePanel" disabled><svg class="icon" aria-hidden="true"><use href="#i-explode"/></svg><span>爆炸</span></button>
+    <span class="dock-divider"></span>
+    <button id="fitBtn" class="dock-btn" type="button" disabled><svg class="icon" aria-hidden="true"><use href="#i-fit"/></svg><span>适应</span></button>
+  </nav>
+  <footer class="stage-footer"><span id="statStatus">等待文件</span><span class="desktop-hint">拖动旋转 · 滚轮缩放</span><span class="touch-hint">单指旋转 · 双指缩放</span></footer>
+
+  <dialog class="sidebar glass" id="settingsPanel" aria-labelledby="settingsTitle">
+    <div class="sidebar-heading"><div><span class="eyebrow">WORKSPACE</span><h2 id="settingsTitle">你的工作台</h2></div><button id="sidebarClose" class="icon-btn" type="button" aria-label="关闭设置面板"><svg class="icon" aria-hidden="true"><use href="#i-close"/></svg></button></div>
+    <section class="panel"><h3>场景模型</h3><ul id="modelList" class="model-list"></ul></section>
+    <section class="panel"><h3>显示</h3>
+      <div class="row" role="radiogroup" aria-label="显示模式">
+        <label class="chip"><input type="radio" name="style" id="styleSolid" checked />实体</label>
+        <label class="chip"><input type="radio" name="style" id="styleEdges" />边线</label>
+        <label class="chip"><input type="radio" name="style" id="styleWireframe" />线框</label>
+        <label class="chip"><input type="radio" name="style" id="styleXray" />透射</label>
+      </div>
+      <label class="row switch-row">地板网格 <input type="checkbox" id="gridToggle" checked /></label>
+    </section>
+    <details class="panel" id="sectionDetails"><summary>剖面分析</summary>
+      <label class="row switch-row">启用剖面 <input type="checkbox" id="sectionToggle" /></label>
+      <label class="row">方向<select id="sectionAxisSelect" disabled><option value="x">沿 X 切</option><option value="y">沿 Y 切</option><option value="z">沿 Z 切</option></select></label>
+      <label class="row">位置<input type="range" id="sectionOffset" min="0" max="100" value="50" disabled /></label>
+    </details>
+    <details class="panel"><summary>模型信息与精度</summary>
+      <dl id="statsBox" class="stats"></dl>
+      <label class="row">单位<select id="unitSelect"><option value="mm">毫米 mm</option><option value="cm">厘米 cm</option><option value="m">米 m</option><option value="in">英寸 in</option></select></label>
+      <label class="row">CAD 精度<select id="cadQualitySelect"><option value="fast">快速</option><option value="standard" selected>标准</option><option value="fine">精细</option></select></label>
+      <label class="row">边线角度<select id="edgeAngleSelect"><option value="15">15°</option><option value="30" selected>30°</option><option value="45">45°</option></select></label>
+    </details>
+    <div class="export-actions"><button id="shotBtn" class="btn" type="button" disabled>保存截图</button><button id="fullscreenBtn" class="btn" type="button">全屏查看</button></div>
+    <footer class="sidebar-footer"><span>文件仅在本机处理，无需上传。</span><div><span id="backendBadge" class="badge">检测中…</span><span id="buildStamp" class="mono">build dev</span></div><div id="cadEngineState" class="mono"></div></footer>
+  </dialog>
 </div>
 <input id="fileInput" type="file" multiple hidden />
 <script type="module" src="./src/main.ts"></script>

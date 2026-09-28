@@ -1,4 +1,7 @@
-import type { Stage, DisplayStyle, MeasurementUnit, SectionAxis, StandardView } from "../viewer/stage";
+import type { Stage, DisplayStyle, MeasurementUnit, SectionAxis } from "../viewer/stage";
+import { createEntities } from "./entities";
+import { createNavCube } from "./navCube";
+import { createDemo } from "../viewer/demo";
 import { convertLength } from "../viewer/stage";
 import { ACCEPTED_EXTENSIONS, parseOne, primaryFiles } from "../loaders/openFiles";
 import { CAD_QUALITY_PRESETS, type CadQuality } from "../loaders/step";
@@ -41,7 +44,11 @@ export function createApp(stage: Stage, backend: Backend, forceWebGL: boolean): 
   const shotBtn = el<HTMLButtonElement>("shotBtn");
   const fullscreenBtn = el<HTMLButtonElement>("fullscreenBtn");
   const sidebarToggle = el<HTMLButtonElement>("sidebarToggle");
-  const sidebar = document.querySelector<HTMLElement>(".sidebar");
+  const sidebar = el<HTMLDialogElement>("settingsPanel");
+  const explodeRange = el<HTMLInputElement>("explodeRange");
+  const explodePanel = el<HTMLElement>("explodePanel");
+  const explodeBtn = el<HTMLButtonElement>("explodeBtn");
+  const styleBtn = el<HTMLButtonElement>("styleBtn");
   const fileInput = el<HTMLInputElement>("fileInput");
   const stageEl = el<HTMLElement>("stage");
   const dropHint = el<HTMLDivElement>("dropHint");
@@ -66,6 +73,8 @@ export function createApp(stage: Stage, backend: Backend, forceWebGL: boolean): 
   const styleSolid = el<HTMLInputElement>("styleSolid");
   const styleEdges = el<HTMLInputElement>("styleEdges");
   const styleWireframe = el<HTMLInputElement>("styleWireframe");
+  const styleXray = el<HTMLInputElement>("styleXray");
+  const renderEntities = createEntities(stage);
 
   let unit: MeasurementUnit = "mm";
   let cadQuality: CadQuality = "standard";
@@ -122,10 +131,29 @@ export function createApp(stage: Stage, backend: Backend, forceWebGL: boolean): 
 
   function renderModelList(): void {
     modelList.replaceChildren();
+    renderEntities();
+    dropHint.hidden = stage.modelList.length > 0;
+    const active = stage.active;
+    el<HTMLElement>("activeName").textContent = active?.name ?? "无限视角，尽在本地。";
+    el<HTMLElement>("navigation").hidden = active === null;
+    explodeBtn.disabled = active === null;
+    const canExplode = active !== null && active.parts.length > 1;
+    explodeRange.disabled = !canExplode;
+    el<HTMLElement>("explodeHint").hidden = active === null || canExplode;
+    el<HTMLButtonElement>("assembleBtn").disabled = !canExplode;
+    el<HTMLButtonElement>("separateBtn").disabled = !canExplode;
+    explodeBtn.title = explodeBtn.disabled ? "爆炸视图需要至少两个独立网格部件" : "分离模型部件";
+    if (explodeBtn.disabled) explodePanel.hidePopover();
+    explodeRange.value = String(Math.round((active?.explodeTarget ?? 0) * 100));
+    el<HTMLOutputElement>("explodeValue").value = `${explodeRange.value}%`;
+    el<HTMLElement>("partCount").textContent = `${active?.parts.length ?? 0} 部件`;
+    explodeBtn.classList.toggle("active", (active?.explodeTarget ?? 0) > 0);
+    styleBtn.disabled = active === null;
+    el<HTMLButtonElement>("fitBtn").disabled = active === null;
     if (stage.modelList.length === 0) {
       const empty = document.createElement("li");
       empty.className = "empty";
-      empty.textContent = "还没有模型，把文件拖进右侧窗口";
+      empty.textContent = "打开一个模型，开始探索";
       modelList.append(empty);
       shotBtn.disabled = true;
       return;
@@ -202,6 +230,7 @@ export function createApp(stage: Stage, backend: Backend, forceWebGL: boolean): 
     statsBox.replaceChildren();
     const handle = stage.active;
     if (handle === null) {
+      setStatus("等待文件");
       addStat("状态", "等待文件");
       return;
     }
@@ -210,6 +239,7 @@ export function createApp(stage: Stage, backend: Backend, forceWebGL: boolean): 
     addStat("格式", FORMAT_TITLES[handle.format] ?? handle.format);
     addStat("顶点", handle.stats.vertices.toLocaleString());
     addStat("三角面", handle.stats.triangles.toLocaleString());
+    addStat("独立网格部件", String(handle.parts.length));
     addStat(
       `包围盒 (${UNIT_LABEL[unit]})`,
       [
@@ -277,13 +307,11 @@ export function createApp(stage: Stage, backend: Backend, forceWebGL: boolean): 
       if (signal.cancelled) {
         toast("已取消", "warn");
       } else if (opened > 0) {
-        dropHint.hidden = true;
+        setSidebarOpen(false);
         toast(opened === 1 ? `已打开 ${primaries[0].name}` : `已打开 ${opened} 个模型`);
       }
       // Edge lines are stale as soon as the model set changes.
-      if (stage.style === "edges") {
-        await stage.setDisplayStyle("edges", reportEdgeProgress);
-      }
+      await stage.setDisplayStyle(stage.style, reportEdgeProgress);
     } catch (error) {
       const message = describeError(error);
       if (message !== "已取消") {
@@ -306,6 +334,11 @@ export function createApp(stage: Stage, backend: Backend, forceWebGL: boolean): 
   // ------------------------------------------------------------------ display settings
 
   async function applyStyle(style: DisplayStyle): Promise<void> {
+    styleSolid.checked = style === "solid";
+    styleEdges.checked = style === "edges";
+    styleWireframe.checked = style === "wireframe";
+    styleXray.checked = style === "xray";
+    el<HTMLElement>("styleLabel").textContent = { solid: "实体", edges: "边线", wireframe: "线框", xray: "透射" }[style];
     try {
       if (style === "edges") {
         showProgress("生成边线…", null);
@@ -318,9 +351,13 @@ export function createApp(stage: Stage, backend: Backend, forceWebGL: boolean): 
     }
   }
 
+  styleBtn.addEventListener("click", () => {
+    void applyStyle(stage.style === "solid" ? "edges" : stage.style === "edges" ? "wireframe" : stage.style === "wireframe" ? "xray" : "solid");
+  });
   styleSolid.addEventListener("change", () => void applyStyle("solid"));
   styleEdges.addEventListener("change", () => void applyStyle("edges"));
   styleWireframe.addEventListener("change", () => void applyStyle("wireframe"));
+  styleXray.addEventListener("change", () => void applyStyle("xray"));
 
   gridToggle.addEventListener("change", () => {
     stage.setGridVisible(gridToggle.checked);
@@ -359,10 +396,21 @@ export function createApp(stage: Stage, backend: Backend, forceWebGL: boolean): 
   // ------------------------------------------------------------------ buttons
 
   openBtn.addEventListener("click", () => fileInput.click());
+  el<HTMLButtonElement>("emptyOpenBtn").addEventListener("click", () => fileInput.click());
   fileInput.addEventListener("change", () => {
     const files = fileInput.files === null ? [] : [...fileInput.files];
     fileInput.value = "";
     void openFiles(files);
+  });
+
+  el<HTMLButtonElement>("demoBtn").addEventListener("click", () => {
+    if (busy) return;
+    stage.addModel(createDemo(), "ORBITAL · 装配示例");
+    stage.setStandardView("iso", false);
+    renderModelList();
+    renderStats();
+    void applyStyle(stage.style);
+    toast("11 个独立部件 · 点击底部「爆炸」试试", "info", 5000);
   });
 
   cancelBtn.addEventListener("click", () => {
@@ -392,7 +440,7 @@ export function createApp(stage: Stage, backend: Backend, forceWebGL: boolean): 
         if (document.fullscreenElement !== null) {
           await document.exitFullscreen();
         } else {
-          await stageEl.requestFullscreen();
+          await el<HTMLElement>("app").requestFullscreen();
         }
       } catch (error) {
         toast(`全屏失败：${describeError(error)}`, "error");
@@ -403,13 +451,51 @@ export function createApp(stage: Stage, backend: Backend, forceWebGL: boolean): 
     fullscreenBtn.textContent = document.fullscreenElement === null ? "全屏" : "退出全屏";
   });
 
-  sidebarToggle.addEventListener("click", () => {
-    sidebar?.classList.toggle("open");
+  fullscreenBtn.hidden = !document.fullscreenEnabled;
+  function setSidebarOpen(open: boolean): void {
+    if (open) {
+      renderModelList();
+      explodePanel.hidePopover();
+      sidebar.showModal();
+    } else sidebar.close();
+    sidebarToggle.setAttribute("aria-expanded", String(open));
+  }
+  sidebarToggle.addEventListener("click", () => setSidebarOpen(true));
+  el<HTMLButtonElement>("sidebarClose").addEventListener("click", () => setSidebarOpen(false));
+  sidebar.addEventListener("close", () => sidebarToggle.setAttribute("aria-expanded", "false"));
+  sidebar.addEventListener("click", (event) => {
+    const box = sidebar.getBoundingClientRect();
+    if (event.target === sidebar && (event.clientX < box.left || event.clientX > box.right || event.clientY < box.top || event.clientY > box.bottom)) {
+      setSidebarOpen(false);
+    }
+  });
+  const sheetHeading = sidebar.querySelector<HTMLElement>(".sidebar-heading")!;
+  let sheetStartY = 0;
+  sheetHeading.addEventListener("pointerdown", (event) => {
+    sheetStartY = event.clientY;
+    if (!(event.target as HTMLElement).closest("button")) sheetHeading.setPointerCapture(event.pointerId);
+  });
+  sheetHeading.addEventListener("pointerup", (event) => {
+    if (event.clientY - sheetStartY > 65) setSidebarOpen(false);
   });
 
-  for (const button of document.querySelectorAll<HTMLButtonElement>("[data-view]")) {
-    button.addEventListener("click", () => {
-      stage.setStandardView(button.dataset["view"] as StandardView);
+  createNavCube(stage, el<HTMLElement>("navCube"));
+  el<HTMLButtonElement>("isoBtn").addEventListener("click", () => stage.setStandardView("iso"));
+  explodeRange.addEventListener("input", () => {
+    stage.setExplode(Number(explodeRange.value) / 100);
+    el<HTMLOutputElement>("explodeValue").value = `${explodeRange.value}%`;
+    explodeBtn.classList.toggle("active", Number(explodeRange.value) > 0);
+  });
+  explodePanel.addEventListener("beforetoggle", (event) => {
+    if ((event as ToggleEvent).newState === "open" && stage.active?.explodeTarget === null && stage.active.parts.length > 1) {
+      explodeRange.value = "50";
+      explodeRange.dispatchEvent(new Event("input"));
+    }
+  });
+  for (const [id, value] of [["assembleBtn", "0"], ["separateBtn", "100"]] as const) {
+    el<HTMLButtonElement>(id).addEventListener("click", () => {
+      explodeRange.value = value;
+      explodeRange.dispatchEvent(new Event("input"));
     });
   }
   el<HTMLButtonElement>("fitBtn").addEventListener("click", () => {
@@ -442,7 +528,7 @@ export function createApp(stage: Stage, backend: Backend, forceWebGL: boolean): 
   });
 
   window.addEventListener("keydown", (event) => {
-    if (event.target instanceof HTMLInputElement || event.target instanceof HTMLSelectElement) {
+    if (sidebar.open || event.target instanceof HTMLInputElement || event.target instanceof HTMLSelectElement) {
       return;
     }
     switch (event.key.toLowerCase()) {
@@ -454,7 +540,7 @@ export function createApp(stage: Stage, backend: Backend, forceWebGL: boolean): 
         stage.setGridVisible(gridToggle.checked);
         return;
       case "w": {
-        const next: DisplayStyle = stage.style === "solid" ? "edges" : stage.style === "edges" ? "wireframe" : "solid";
+        const next: DisplayStyle = stage.style === "solid" ? "edges" : stage.style === "edges" ? "wireframe" : stage.style === "wireframe" ? "xray" : "solid";
         styleSolid.checked = next === "solid";
         styleEdges.checked = next === "edges";
         styleWireframe.checked = next === "wireframe";

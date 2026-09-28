@@ -273,7 +273,7 @@ check("不支持的格式给提示而不是静默失败", junkToast.includes("�
 await boot();
 await loadSample([sample.stl]);
 const solidFrame = await signature();
-await page.click("#styleEdges");
+await page.click("#styleBtn");
 await page.waitForFunction(() => window.__mzViewer.summary().style === "edges", null, { timeout: 30000 });
 await page.waitForTimeout(600);
 const edgeFrame = await signature();
@@ -283,36 +283,43 @@ check("带边线模式生效（谱面被画出边线）", edgeDiff > 0.002 && (a
   `${(edgeDiff * 100).toFixed(2)}% 的格子变亮`);
 check("边线模式像素稳定", diffRatio(edgeFrame, edgeFrameAgain) < 0.01, `${(diffRatio(edgeFrame, edgeFrameAgain) * 100).toFixed(2)}% 抖动`);
 
-await page.click("#styleWireframe");
+await page.click("#styleBtn");
 await page.waitForFunction(() => window.__mzViewer.summary().style === "wireframe", null, { timeout: 30000 });
 await page.waitForTimeout(600);
 const wireFrame = await signature();
 check("线框模式生效", meanLuminance(wireFrame) < meanLuminance(solidFrame) * 0.9,
   `实心亮度 ${meanLuminance(solidFrame).toFixed(1)} → 线框 ${meanLuminance(wireFrame).toFixed(1)}`);
-await page.click("#styleSolid");
+await page.click("#styleBtn");
+await page.waitForTimeout(300);
+const xrayFrame = await signature();
+check("X-ray 透射模式产生不同渲染", (await page.evaluate(() => window.__mzViewer.summary().style)) === "xray" && diffRatio(xrayFrame, solidFrame) > 0.01);
+await page.click("#styleBtn");
 await page.waitForTimeout(300);
 
-await page.click(".model-item .icon-btn");
+await page.click("#sidebarToggle");
+await page.locator(".model-item .icon-btn").first().click();
 await page.waitForTimeout(300);
 const hiddenState = await page.evaluate(() => window.__mzViewer.summary());
 check("隐藏 / 显示模型", hiddenState.models[0].visible === false, `visible=${hiddenState.models[0].visible}`);
-await page.click(".model-item .icon-btn");
+await page.locator(".model-item .icon-btn").first().click();
 await page.waitForTimeout(300);
 check("重新显示模型", (await page.evaluate(() => window.__mzViewer.summary())).models[0].visible === true);
 
 const statsMm = await page.textContent("#statsBox");
+await page.locator("details").filter({ has: page.locator("#unitSelect") }).locator("summary").click();
 await page.selectOption("#unitSelect", "cm");
 await page.waitForTimeout(200);
 const statsCm = await page.textContent("#statsBox");
 check("单位切换改变包围盒读数", statsMm !== statsCm && statsCm.includes("cm"), statsCm.match(/[\d.]+ × [\d.]+ × [\d.]+/)?.[0] ?? "");
 
-await page.click('[data-view="top"]');
+await page.click("#sidebarClose");
+await page.locator("#navCube").press("5");
 await page.waitForTimeout(500);
 const topViewPosition = await page.evaluate(() => {
   const camera = window.__mzViewer.stage.camera;
   return [camera.position.x, camera.position.y, camera.position.z];
 });
-await page.click('[data-view="front"]');
+await page.locator("#navCube").press("1");
 await page.waitForTimeout(500);
 const frontViewPosition = await page.evaluate(() => {
   const camera = window.__mzViewer.stage.camera;
@@ -321,6 +328,8 @@ const frontViewPosition = await page.evaluate(() => {
 check("标准视图切换真的动了相机", topViewPosition[1] !== frontViewPosition[1] && Math.abs(frontViewPosition[2]) > Math.abs(frontViewPosition[0]),
   `顶 ${topViewPosition.map((v) => v.toFixed(1)).join(",")} → 前 ${frontViewPosition.map((v) => v.toFixed(1)).join(",")}`);
 
+await page.click("#sidebarToggle");
+await page.click("#sectionDetails summary");
 await page.check("#sectionToggle");
 await page.fill("#sectionOffset", "0");
 await page.dispatchEvent("#sectionOffset", "input");
@@ -341,7 +350,13 @@ const sectionOff = await signature();
 check("关掉剖面后模型完整回来", diffRatio(sectionOff, sectionBaseline) > 0.05 && diffRatio(sectionOff, sectionHundred) < 0.05,
   `与完整态差异 ${(diffRatio(sectionOff, sectionHundred) * 100).toFixed(2)}%`);
 
-await page.click('[data-view="iso"]');
+await page.click("#sidebarClose");
+await page.click("#isoBtn");
+await page.waitForFunction(() => {
+  const stage = window.__mzViewer.stage;
+  const direction = stage.camera.position.clone().sub(stage.controls.target).normalize();
+  return Math.abs(direction.x - direction.z) < 1e-4 && Math.abs(direction.y / direction.x - 0.8) < 1e-4;
+});
 await page.click("#fitBtn");
 await page.waitForTimeout(500);
 const fittedFrame = await signature();
@@ -350,6 +365,7 @@ check("适应视图后模型撑满画面", fittedBox.widthRatio > 0.5 || fittedB
   `跨度 ${(fittedBox.widthRatio * 100).toFixed(0)}% × ${(fittedBox.heightRatio * 100).toFixed(0)}%`);
 
 const beforeRemove = (await page.evaluate(() => window.__mzViewer.summary())).models.length;
+await page.click("#sidebarToggle");
 await page.click(".model-item .icon-btn:last-child");
 await page.waitForTimeout(300);
 const afterRemove = await page.evaluate(() => window.__mzViewer.summary());
@@ -458,13 +474,11 @@ check("回退路径无控制台错误", consoleErrors.length === 0 && pageErrors
 
 await page.setViewportSize({ width: 390, height: 844 });
 await boot();
-const closedTransform = await page.evaluate(() => getComputedStyle(document.querySelector(".sidebar")).transform);
+const initiallyClosed = !(await page.isVisible("#settingsPanel"));
 const toggleVisible = await page.isVisible("#sidebarToggle");
 await page.click("#sidebarToggle");
 await page.waitForTimeout(400);
-const openTransform = await page.evaluate(() => getComputedStyle(document.querySelector(".sidebar")).transform);
-check("窄屏（390×844）：侧栏默认收起、面板按钮能展开", toggleVisible && closedTransform !== "none" && openTransform === "none",
-  `${closedTransform} → ${openTransform}`);
+check("窄屏（390×844）：设置默认收起、工具按钮能展开", toggleVisible && initiallyClosed && await page.isVisible("#settingsPanel"));
 
 const mobileSummary = await loadSample([sample.stl]);
 const mobileCanvas = await page.evaluate(() => {
@@ -474,6 +488,30 @@ const mobileCanvas = await page.evaluate(() => {
 const mobileFrame = await signature();
 check("窄屏下能打开并渲染模型", mobileSummary.models.length === 1 && mobileCanvas[0] === 390 && stdLuminance(mobileFrame) > 1,
   `canvas ${mobileCanvas.join("x")} tri=${mobileSummary.models[0]?.triangles}`);
+
+// Responsive controls must remain reachable on small phones and in landscape.
+for (const [width, height] of [[320, 568], [844, 390]]) {
+  await page.setViewportSize({ width, height });
+  await page.click("#sidebarToggle");
+  await page.click("#sidebarClose");
+  await page.click("#sidebarToggle");
+  await page.keyboard.press("Escape");
+  await page.waitForFunction(() => document.getElementById("sidebarToggle").getAttribute("aria-expanded") === "false");
+  const layoutOk = await page.evaluate(() => {
+    const controls = document.querySelectorAll(".topbar .btn, .tool-dock .dock-btn");
+    return [...controls].every((control) => {
+      const box = control.getBoundingClientRect();
+      return box.width > 0 && box.left >= 0 && box.right <= innerWidth && box.height >= 44;
+    }) && document.documentElement.scrollWidth <= innerWidth;
+  });
+  check(`触控布局 ${width}×${height}：按钮可达、面板可关闭`, layoutOk &&
+    await page.getAttribute("#sidebarToggle", "aria-expanded") === "false");
+}
+await page.click("#sidebarToggle");
+await page.locator('#modelList button[title="移除"]').click();
+await page.click("#sidebarClose");
+check("移除最后一个模型恢复空状态", await page.isVisible("#emptyOpenBtn") &&
+  await page.textContent("#statStatus") === "等待文件");
 
 // ---------------------------------------------------------------- summary
 
