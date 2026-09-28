@@ -75,6 +75,7 @@ export function createApp(stage: Stage, backend: Backend, forceWebGL: boolean): 
   const styleWireframe = el<HTMLInputElement>("styleWireframe");
   const styleXray = el<HTMLInputElement>("styleXray");
   const renderEntities = createEntities(stage);
+  fileInput.accept = ACCEPTED_EXTENSIONS.join(",");
 
   let unit: MeasurementUnit = "mm";
   let cadQuality: CadQuality = "standard";
