@@ -1,14 +1,25 @@
 import * as THREE from "three/webgpu";
 
-type SoftBox = { u: number; v: number; radius: number; strength: number };
+type Light = {
+  /** Centre in equirect fractions; u wraps around the seam. */
+  u: number;
+  v: number;
+  halfU: number;
+  halfV: number;
+  /** Softness of the edge, as a fraction of the map. */
+  feather: number;
+  strength: number;
+};
 
 /**
- * Soft boxes placed in equirect space: one bright key above the horizon, one weaker fill behind it.
- * `radius` is the horizontal half width; the vertical falloff reuses it scaled by 1.6.
+ * Boxy lights rather than round blobs: a crisp edge is what reads as a reflection on glass or paint.
+ * A key above the horizon, a weaker fill behind it, and a thin bright horizon band that gives every
+ * glazed and painted surface a visible beltline.
  */
-const SOFT_BOXES: SoftBox[] = [
-  { u: 0.7, v: 0.2, radius: 0.13, strength: 1 },
-  { u: 0.22, v: 0.3, radius: 0.1, strength: 0.45 }
+const LIGHTS: Light[] = [
+  { u: 0.7, v: 0.22, halfU: 0.1, halfV: 0.06, feather: 0.035, strength: 1 },
+  { u: 0.22, v: 0.34, halfU: 0.07, halfV: 0.05, feather: 0.035, strength: 0.42 },
+  { u: 0.45, v: 0.5, halfU: 0.34, halfV: 0.02, feather: 0.025, strength: 0.5 }
 ];
 
 /**
@@ -37,16 +48,17 @@ export function createStudioEnvironment(): THREE.DataTexture {
       let g = 0.12 + sky * 0.8 + floor * 0.11;
       let b = 0.16 + sky * 0.9 + floor * 0.1;
 
-      for (const box of SOFT_BOXES) {
-        // Distance in equirect space, with the horizontal axis wrapped so the box does not tear.
-        const raw = Math.abs(u - box.u);
-        const du = Math.min(raw, 1 - raw) / box.radius;
-        const dv = (v - box.v) / (box.radius * 1.6);
+      for (const light of LIGHTS) {
+        // Distance in equirect space, measured from the box surface and wrapped horizontally so the
+        // light does not tear at the seam.
+        const raw = Math.abs(u - light.u);
+        const du = Math.max(0, Math.min(raw, 1 - raw) - light.halfU) / light.feather;
+        const dv = Math.max(0, Math.abs(v - light.v) - light.halfV) / light.feather;
         const distance = Math.sqrt(du * du + dv * dv);
         if (distance >= 1) {
           continue;
         }
-        const falloff = (1 - distance) ** 2 * box.strength;
+        const falloff = (1 - distance) ** 2 * light.strength;
         r += falloff;
         g += falloff * 0.98;
         b += falloff * 0.94;
