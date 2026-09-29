@@ -15,6 +15,7 @@ export type ViewerTestHooks = {
     activeId: string | null;
     style: string;
     gridVisible: boolean;
+    environment: boolean;
     sectionEnabled: boolean;
     controller: ControllerKind;
     backend: string;

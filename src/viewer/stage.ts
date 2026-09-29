@@ -1,5 +1,6 @@
 import * as THREE from "three/webgpu";
 import { ControllerHost, type ControllerKind } from "./controller";
+import { createStudioEnvironment } from "./environment";
 import { collectParts, explodeParts, type ExplodePart } from "./explode";
 import type { ParsedModel } from "../loaders/types";
 import { createAppearance, applyAppearance, disposeAppearance, type ModelAppearance, type DisplayStyle } from "./appearance";
@@ -69,6 +70,9 @@ export class Stage {
 
   private readonly canvas: HTMLCanvasElement;
   private readonly grid: THREE.GridHelper;
+  /** Reflections: without these, glass and bare metal have nothing to mirror. */
+  private readonly environment = createStudioEnvironment();
+  private environmentOn = true;
   /** ClippingGroup is the WebGPU-build way to clip: the planes live in the scene graph. */
   private readonly clippingGroup = new THREE.ClippingGroup();
   private readonly models: ModelHandle[] = [];
@@ -95,6 +99,8 @@ export class Stage {
     this.canvas = canvas;
 
     this.scene.background = new THREE.Color(0x090d12);
+    this.scene.environment = this.environment;
+    this.scene.environmentIntensity = 1.2;
     this.scene.add(new THREE.HemisphereLight(0xc8d8ff, 0x1b2029, 1.6));
     const keyLight = new THREE.DirectionalLight(0xffffff, 2.4);
     keyLight.position.set(4, 7, 5);
@@ -416,6 +422,16 @@ export class Stage {
     return this.controls.kind;
   }
 
+  /** Reflections on or off; off is the flat, purely analytic lighting the viewer started with. */
+  get environmentEnabled(): boolean {
+    return this.environmentOn;
+  }
+
+  setEnvironment(enabled: boolean): void {
+    this.environmentOn = enabled;
+    this.scene.environment = enabled ? this.environment : null;
+  }
+
   /** Swaps the camera navigation model, keeping the current pose and focal point. */
   setController(kind: ControllerKind): void {
     if (kind === this.controls.kind) {
@@ -598,6 +614,7 @@ export class Stage {
 
   dispose(): void {
     this.renderer.setAnimationLoop(null);
+    this.environment.dispose();
     for (const handle of this.models) {
       disposeAppearance(handle.appearance);
       disposeObject(handle.root);

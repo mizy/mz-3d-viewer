@@ -66,6 +66,7 @@ export function createApp(stage: Stage, backend: Backend, forceWebGL: boolean): 
   const cadEngineStateEl = el<HTMLDivElement>("cadEngineState");
   const toastEl = el<HTMLDivElement>("toast");
   const gridToggle = el<HTMLInputElement>("gridToggle");
+  const environmentToggle = el<HTMLInputElement>("environmentToggle");
   const sectionToggle = el<HTMLInputElement>("sectionToggle");
   const sectionAxisSelect = el<HTMLSelectElement>("sectionAxisSelect");
   const sectionOffset = el<HTMLInputElement>("sectionOffset");
@@ -371,6 +372,10 @@ export function createApp(stage: Stage, backend: Backend, forceWebGL: boolean): 
   // The control, not the stage, owns the default: the grid starts hidden and only the user shows it.
   stage.setGridVisible(gridToggle.checked);
 
+  environmentToggle.addEventListener("change", () => {
+    stage.setEnvironment(environmentToggle.checked);
+  });
+  stage.setEnvironment(environmentToggle.checked);
 
   function applySection(): void {
     const enabled = sectionToggle.checked;
@@ -656,6 +661,7 @@ export function createApp(stage: Stage, backend: Backend, forceWebGL: boolean): 
       activeId: stage.active?.id ?? null,
       style: stage.style,
       gridVisible: gridToggle.checked,
+      environment: stage.environmentEnabled,
       sectionEnabled: sectionToggle.checked,
       controller: stage.controllerKind,
       backend,

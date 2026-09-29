@@ -35,6 +35,7 @@ on phones it opens as a bottom sheet (swipe the heading down to close).
 - **Camera model:** the sidebar picks between 轨道 Orbit (target-locked, poles clamped), 旋转球 Arcball (no polar clamp, unlimited flipping) and 轨迹球 Trackball (free rolling, closest to a traditional CAD feel). All three share framing, section, NavCube and screenshot behaviour, and the choice is remembered across reloads.
 - **Home:** the MZ logo (top-left) clears the scene and returns to the landing state in place, without a reload; the anchor keeps its `href`, so ⌘/middle click still opens a clean copy. It carries a full 44px target with hover feedback.
 - **Grid:** off on first load. The sidebar switch or `g` turns the floor grid on.
+- **Environment:** a studio environment map painted in code (no HDR to download, still offline) lights the scene and gives glass, paint and chrome something to reflect. Without it a window is effectively invisible: a dielectric reflects about 4%, so the glass only shows the cabin behind it. The sidebar switch turns it off for flat, light-only shading.
 - **Open files:** the picker, or a drop anywhere in the window — top bar, dock and nav cube included. A file drag is announced over the whole window, cancels the browser's own "open this file" default, and closes the workspace panel so the drop target stays visible.
 - **Explode:** first opening animates to 50%. Slider changes and fully separated / reassemble use a 400ms transition with matching camera framing; reopening preserves the chosen value. Offsets belong to the active model, edge lines follow the parts, and dimensions retain their assembled values.
 - **X-ray:** a translucent cyan inspection mode; leaving it restores imported materials. Selected parts stay highlighted.
@@ -60,6 +61,7 @@ the dock and the body to prove the browser default is cancelled everywhere.
 | `src/main.ts` | boot order: renderer → stage → UI → PWA registration |
 | `src/renderer/createRenderer.ts` | WebGPU-first renderer, reports which backend actually ran, `?webgl=1` forces the WebGL2 fallback |
 | `src/viewer/stage.ts` | scene graph, camera, lights, grid, display modes, section, screenshot, render loop |
+| `src/viewer/environment.ts` | the procedural studio environment: glass and metal need something to reflect, and an HDR would cost an offline download |
 | `src/viewer/controller.ts` | camera navigation models (orbit / arcball / trackball) behind one contract, swapped in place |
 | `src/loaders/*.ts` | one parser per format family, all returning `ParsedModel { root, warnings }` |
 | `src/loaders/three-mf.ts` | 3MF packages: three's loader for geometry/materials, plus the unit the package declares |
