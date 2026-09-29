@@ -1,4 +1,4 @@
-import type { Stage, DisplayStyle, MeasurementUnit, SectionAxis, ControllerKind } from "../viewer/stage";
+import type { Stage, DisplayStyle, MeasurementUnit, SectionAxis, ControllerKind, Projection } from "../viewer/stage";
 import { CONTROLLER_LABEL, isControllerKind } from "../viewer/controller";
 import { createEntities } from "./entities";
 import { createNavCube } from "./navCube";
@@ -74,6 +74,8 @@ export function createApp(stage: Stage, backend: Backend, forceWebGL: boolean): 
   const edgeAngleSelect = el<HTMLSelectElement>("edgeAngleSelect");
   const cadQualitySelect = el<HTMLSelectElement>("cadQualitySelect");
   const controllerSelect = el<HTMLSelectElement>("controllerSelect");
+  const projectionPerspective = el<HTMLInputElement>("projectionPerspective");
+  const projectionOrthographic = el<HTMLInputElement>("projectionOrthographic");
   const styleSolid = el<HTMLInputElement>("styleSolid");
   const styleEdges = el<HTMLInputElement>("styleEdges");
   const styleWireframe = el<HTMLInputElement>("styleWireframe");
@@ -407,13 +409,13 @@ export function createApp(stage: Stage, backend: Backend, forceWebGL: boolean): 
     }
   });
 
-  // ------------------------------------------------------------------ camera controller
+  // ------------------------------------------------------------------ camera controller & projection
 
-  /** The one remembered preference: how this person likes to move the camera, not a property of a file. */
+  /** The remembered view preferences: how this person likes to look at a model, not a property of a file. */
   function applyController(kind: ControllerKind, announce: boolean): void {
     stage.setController(kind);
     controllerSelect.value = kind;
-    storeController(kind);
+    storePreference(CONTROLLER_STORAGE_KEY, kind);
     if (announce) {
       toast(`相机控制器：${CONTROLLER_LABEL[kind]}`, "info", 2500);
     }
@@ -425,9 +427,26 @@ export function createApp(stage: Stage, backend: Backend, forceWebGL: boolean): 
     }
   });
 
+  function applyProjection(projection: Projection, announce: boolean): void {
+    stage.setProjection(projection);
+    projectionPerspective.checked = projection === "perspective";
+    projectionOrthographic.checked = projection === "orthographic";
+    storePreference(PROJECTION_STORAGE_KEY, projection);
+    if (announce) {
+      toast(`投影方式：${projection === "orthographic" ? "正交（平行投影）" : "透视"}`, "info", 2500);
+    }
+  }
+
+  projectionPerspective.addEventListener("change", () => applyProjection("perspective", true));
+  projectionOrthographic.addEventListener("change", () => applyProjection("orthographic", true));
+
   const rememberedController = readStoredController();
   if (rememberedController !== null) {
     applyController(rememberedController, false);
+  }
+  const rememberedProjection = readStoredProjection();
+  if (rememberedProjection !== null) {
+    applyProjection(rememberedProjection, false);
   }
 
   // ------------------------------------------------------------------ buttons
@@ -648,6 +667,7 @@ export function createApp(stage: Stage, backend: Backend, forceWebGL: boolean): 
     capture: () => stage.captureNextFrame(),
     cadEngine: () => cadEngineState,
     setController: (kind) => applyController(kind, false),
+    setProjection: (projection) => applyProjection(projection, false),
     summary: () => ({
       models: stage.modelList.map((handle) => ({
         id: handle.id,
@@ -664,6 +684,7 @@ export function createApp(stage: Stage, backend: Backend, forceWebGL: boolean): 
       environment: stage.environmentEnabled,
       sectionEnabled: sectionToggle.checked,
       controller: stage.controllerKind,
+      projection: stage.projectionKind,
       backend,
       build,
       cadEngineStatus: cadEngineState.status
@@ -684,19 +705,29 @@ function stripExtension(name: string): string {
 }
 
 const CONTROLLER_STORAGE_KEY = "mz-3d-viewer.controller";
+const PROJECTION_STORAGE_KEY = "mz-3d-viewer.projection";
 
 function readStoredController(): ControllerKind | null {
+  const value = readPreference(CONTROLLER_STORAGE_KEY);
+  return value !== null && isControllerKind(value) ? value : null;
+}
+
+function readStoredProjection(): Projection | null {
+  const value = readPreference(PROJECTION_STORAGE_KEY);
+  return value === "perspective" || value === "orthographic" ? value : null;
+}
+
+function readPreference(key: string): string | null {
   try {
-    const value = localStorage.getItem(CONTROLLER_STORAGE_KEY);
-    return value !== null && isControllerKind(value) ? value : null;
+    return localStorage.getItem(key);
   } catch {
     return null;
   }
 }
 
-function storeController(kind: ControllerKind): void {
+function storePreference(key: string, value: string): void {
   try {
-    localStorage.setItem(CONTROLLER_STORAGE_KEY, kind);
+    localStorage.setItem(key, value);
   } catch {
     // Private mode or a partitioned storage block: navigation still works, it just forgets.
   }

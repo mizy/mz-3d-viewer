@@ -257,7 +257,7 @@ class TrackballAdapter implements CameraController {
   }
 }
 
-function createController(kind: ControllerKind, camera: THREE.PerspectiveCamera, canvas: HTMLCanvasElement, scene: THREE.Scene): CameraController {
+function createController(kind: ControllerKind, camera: THREE.Camera, canvas: HTMLCanvasElement, scene: THREE.Scene): CameraController {
   switch (kind) {
     case "arcball":
       return new ArcballAdapter(camera, canvas, scene);
@@ -269,15 +269,16 @@ function createController(kind: ControllerKind, camera: THREE.PerspectiveCamera,
 }
 
 /**
- * The object the stage holds. It stays alive across controller switches so NavCube's single
- * "change" subscription and `stage.controls.target` reads keep working, whichever model is active.
+ * The object the stage holds. It stays alive across controller and camera switches so NavCube's
+ * single "change" subscription and `stage.controls.target` reads keep working, whichever model and
+ * whichever camera is active.
  */
 export class ControllerHost implements CameraController {
   private current: CameraController;
   private readonly listeners = new Set<() => void>();
 
   constructor(
-    private readonly camera: THREE.PerspectiveCamera,
+    private camera: THREE.Camera,
     private readonly canvas: HTMLCanvasElement,
     private readonly scene: THREE.Scene,
     kind: ControllerKind
@@ -302,20 +303,16 @@ export class ControllerHost implements CameraController {
     if (kind === this.current.kind) {
       return;
     }
-    const focal = this.current.target.clone();
-    const position = this.camera.position.clone();
-    const quaternion = this.camera.quaternion.clone();
-    const up = this.camera.up.clone();
-    this.current.dispose();
-    this.current = createController(kind, this.camera, this.canvas, this.scene);
-    this.camera.position.copy(position);
-    this.camera.quaternion.copy(quaternion);
-    this.camera.up.copy(up);
-    this.current.target.copy(focal);
-    this.current.update();
-    this.current.syncCamera();
-    this.bridge();
-    this.notifyChange();
+    this.rebuild(kind, this.camera);
+  }
+
+  /** Hand the same navigation model to another camera, e.g. when the projection changes. */
+  setCamera(camera: THREE.Camera): void {
+    if (camera === this.camera) {
+      return;
+    }
+    this.camera = camera;
+    this.rebuild(this.current.kind, camera);
   }
 
   update(): void {
@@ -355,5 +352,23 @@ export class ControllerHost implements CameraController {
 
   private bridge(): void {
     this.current.addEventListener("change", () => this.notifyChange());
+  }
+
+  /** A fresh controller for the given model and camera, carrying the pose and focal point over. */
+  private rebuild(kind: ControllerKind, camera: THREE.Camera): void {
+    const focal = this.current.target.clone();
+    const position = camera.position.clone();
+    const quaternion = camera.quaternion.clone();
+    const up = camera.up.clone();
+    this.current.dispose();
+    this.current = createController(kind, camera, this.canvas, this.scene);
+    camera.position.copy(position);
+    camera.quaternion.copy(quaternion);
+    camera.up.copy(up);
+    this.current.target.copy(focal);
+    this.current.update();
+    this.current.syncCamera();
+    this.bridge();
+    this.notifyChange();
   }
 }

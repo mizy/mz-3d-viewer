@@ -12,9 +12,9 @@ export function createEntities(stage: Stage): () => void {
     if (panel.hidden) return;
     panel.hidden = true;
     toggle.setAttribute("aria-expanded", "false");
-    const aspect = stage.camera.aspect;
+    const aspect = stage.viewportAspect;
     stage.resize();
-    if (aspect !== stage.camera.aspect) stage.fitToActive(true);
+    if (aspect !== stage.viewportAspect) stage.fitToActive(true);
   };
 
   const render = (): void => {
@@ -69,9 +69,9 @@ export function createEntities(stage: Stage): () => void {
     toggle.setAttribute("aria-expanded", String(!panel.hidden));
     document.getElementById("explodePanel")!.hidePopover();
     render();
-    const aspect = stage.camera.aspect;
+    const aspect = stage.viewportAspect;
     stage.resize();
-    if (aspect !== stage.camera.aspect) stage.fitToActive(true);
+    if (aspect !== stage.viewportAspect) stage.fitToActive(true);
   });
   document.getElementById("entitiesClose")!.addEventListener("click", close);
   document.getElementById("sidebarToggle")!.addEventListener("click", close);

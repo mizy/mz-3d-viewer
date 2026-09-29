@@ -1,4 +1,4 @@
-import type { Stage, ControllerKind } from "../viewer/stage";
+import type { Stage, ControllerKind, Projection } from "../viewer/stage";
 import type { CadEngineWarmState } from "../pwa/cadEngineWarm";
 
 export type ViewerTestHooks = {
@@ -10,6 +10,7 @@ export type ViewerTestHooks = {
   cadEngine: () => CadEngineWarmState;
   /** Same path the sidebar select takes, minus the toast. */
   setController: (kind: ControllerKind) => void;
+  setProjection: (projection: Projection) => void;
   summary: () => {
     models: Array<{ id: string; name: string; format: string; triangles: number; vertices: number; visible: boolean; sizeMm: [number, number, number] }>;
     activeId: string | null;
@@ -18,6 +19,7 @@ export type ViewerTestHooks = {
     environment: boolean;
     sectionEnabled: boolean;
     controller: ControllerKind;
+    projection: Projection;
     backend: string;
     build: string;
     cadEngineStatus: CadEngineWarmState["status"];

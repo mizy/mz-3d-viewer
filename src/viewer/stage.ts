@@ -61,11 +61,16 @@ export function convertLength(valueInMm: number, unit: MeasurementUnit): number 
  * Every public method that mutates rendering state is called from the UI layer; this class
  * never touches the DOM except for the canvas it renders into.
  */
+export type Projection = "perspective" | "orthographic";
+/** The viewer's vertical field of view; also converts between a perspective distance and an ortho zoom. */
+const PERSPECTIVE_FOV = 45;
+
 export class Stage {
   readonly renderer: THREE.WebGPURenderer;
   readonly scene = new THREE.Scene();
-  readonly camera: THREE.PerspectiveCamera;
-  /** Stable across controller switches: NavCube and the acceptance scripts hold on to it. */
+  /** The camera currently rendering: perspective by default, orthographic when asked for. */
+  camera: THREE.PerspectiveCamera | THREE.OrthographicCamera;
+  /** Stable across controller and projection switches: NavCube and the acceptance scripts hold on. */
   readonly controls: ControllerHost;
 
   private readonly canvas: HTMLCanvasElement;
@@ -73,6 +78,13 @@ export class Stage {
   /** Reflections: without these, glass and bare metal have nothing to mirror. */
   private readonly environment = createStudioEnvironment();
   private environmentOn = true;
+  /**
+   * The orthographic camera keeps a unit frustum and expresses size through `zoom`, so framing it is
+   * one number and the controls' own dolly (which adjusts `zoom` for ortho) needs no special case.
+   */
+  private readonly perspectiveCamera: THREE.PerspectiveCamera;
+  private readonly orthographicCamera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0.1, 5000);
+  private projection: Projection = "perspective";
   /** ClippingGroup is the WebGPU-build way to clip: the planes live in the scene graph. */
   private readonly clippingGroup = new THREE.ClippingGroup();
   private readonly models: ModelHandle[] = [];
@@ -91,6 +103,9 @@ export class Stage {
     target: THREE.Vector3;
     fromDistance: number;
     distance: number;
+    /** Orthographic size is a zoom, not a distance, so it interpolates separately. */
+    fromZoom: number;
+    zoom: number;
     up: THREE.Vector3;
   } | null = null;
 
@@ -116,9 +131,10 @@ export class Stage {
     this.scene.add(this.grid);
     this.scene.add(this.clippingGroup);
 
-    this.camera = new THREE.PerspectiveCamera(45, 1, 0.1, 5000);
-    this.camera.position.set(70, 55, 70);
-    this.camera.lookAt(0, 0, 0);
+    this.perspectiveCamera = new THREE.PerspectiveCamera(PERSPECTIVE_FOV, 1, 0.1, 5000);
+    this.perspectiveCamera.position.set(70, 55, 70);
+    this.perspectiveCamera.lookAt(0, 0, 0);
+    this.camera = this.perspectiveCamera;
 
     this.controls = new ControllerHost(this.camera, canvas, this.scene, "orbit");
     // Any direct canvas gesture takes over from a scripted transition, whatever controller is
@@ -481,27 +497,28 @@ export class Stage {
     this.viewTransition = null;
     const sphere = box.getBoundingSphere(new THREE.Sphere());
     const radius = Math.max(sphere.radius, 0.001);
-    const verticalFov = THREE.MathUtils.degToRad(this.camera.fov);
-    const fov = Math.min(verticalFov, 2 * Math.atan(Math.tan(verticalFov / 2) * this.camera.aspect));
-    const distance = (radius / Math.sin(fov / 2)) * 1.08;
+    const distance = this.fitDistance(radius);
+    const zoom = this.fitZoom(radius);
     const direction = this.camera.position.clone().sub(this.controls.target);
     if (direction.lengthSq() < 1e-9) {
       direction.copy(VIEW_DIRECTIONS.iso);
     }
     direction.normalize();
+    const fromDistance = this.camera.position.distanceTo(this.controls.target);
 
     if (animate && !window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
       this.viewTransition = {
         started: performance.now(), fromRotation: this.camera.quaternion.clone(), rotation: this.camera.quaternion.clone(),
         fromTarget: this.controls.target.clone(), target: sphere.center,
-        fromDistance: this.camera.position.distanceTo(this.controls.target), distance, up: this.camera.up.clone()
+        fromDistance, distance, fromZoom: this.currentZoom(), zoom, up: this.camera.up.clone()
       };
     } else {
       this.controls.target.copy(sphere.center);
       this.camera.position.copy(sphere.center).addScaledVector(direction, distance);
+      this.applyZoom(zoom);
     }
     this.camera.near = Math.max(radius / 1000, 0.01);
-    this.camera.far = Math.max(distance, this.viewTransition?.fromDistance ?? distance) + radius * 20;
+    this.camera.far = Math.max(distance, fromDistance) + radius * 20;
     this.camera.updateProjectionMatrix();
     this.grid.position.set(sphere.center.x, box.min.y, sphere.center.z);
     this.controls.update();
@@ -516,9 +533,8 @@ export class Stage {
     const radius = handle === null || handle.box.isEmpty()
       ? 60
       : Math.max(handle.box.getBoundingSphere(new THREE.Sphere()).radius, 0.001);
-    const verticalFov = THREE.MathUtils.degToRad(this.camera.fov);
-    const fov = Math.min(verticalFov, 2 * Math.atan(Math.tan(verticalFov / 2) * this.camera.aspect));
-    const distance = (radius / Math.sin(fov / 2)) * 1.08;
+    const distance = this.fitDistance(radius);
+    const zoom = this.fitZoom(radius);
 
     const up = view === "top" || view === "bottom"
       ? new THREE.Vector3(0, 0, view === "top" ? -1 : 1)
@@ -530,22 +546,118 @@ export class Stage {
     // Drain any pending inertia before handing the camera to the transition.
     this.controls.settle();
     this.viewTransition = null;
+    const fromDistance = this.camera.position.distanceTo(this.controls.target);
     if (animate && !window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
       this.viewTransition = {
         started: performance.now(), fromRotation: this.camera.quaternion.clone(), rotation,
         fromTarget: this.controls.target.clone(), target,
-        fromDistance: this.camera.position.distanceTo(this.controls.target), distance, up
+        fromDistance, distance, fromZoom: this.currentZoom(), zoom, up
       };
     } else {
       this.camera.up.copy(up);
       this.controls.target.copy(target);
       this.camera.position.copy(target).addScaledVector(direction, distance);
+      this.applyZoom(zoom);
       this.controls.update();
     }
     this.camera.near = Math.max(radius / 1000, 0.01);
-    this.camera.far = Math.max(distance, this.viewTransition?.fromDistance ?? distance) + radius * 20;
+    this.camera.far = Math.max(distance, fromDistance) + radius * 20;
     this.camera.updateProjectionMatrix();
     this.controls.syncCamera();
+  }
+
+  // ---------------------------------------------------------------- projection
+
+  get projectionKind(): Projection {
+    return this.projection;
+  }
+
+  /**
+   * Switches between a perspective and an orthographic camera, carrying the pose and the *apparent
+   * size* across so the model does not jump: a perspective camera's framing is a distance, an
+   * orthographic one's is a zoom over a unit frustum, and the two convert through the field of view.
+   */
+  setProjection(projection: Projection): void {
+    if (projection === this.projection) {
+      return;
+    }
+    this.viewTransition = null;
+    this.controls.settle();
+    const height = this.visibleHeight();
+    const next = projection === "orthographic" ? this.orthographicCamera : this.perspectiveCamera;
+    next.position.copy(this.camera.position);
+    next.quaternion.copy(this.camera.quaternion);
+    next.up.copy(this.camera.up);
+
+    if (isOrthographic(next)) {
+      const aspect = this.viewportAspect;
+      next.left = -aspect;
+      next.right = aspect;
+      next.top = 1;
+      next.bottom = -1;
+      next.zoom = 2 / height;
+    } else {
+      const direction = this.camera.position.clone().sub(this.controls.target);
+      if (direction.lengthSq() < 1e-9) {
+        direction.copy(VIEW_DIRECTIONS.iso);
+      }
+      const distance = height / (2 * Math.tan(THREE.MathUtils.degToRad(PERSPECTIVE_FOV) / 2));
+      next.position.copy(this.controls.target).addScaledVector(direction.normalize(), distance);
+    }
+
+    const radius = this.viewRadius();
+    next.near = Math.max(radius / 1000, 0.01);
+    next.far = next.position.distanceTo(this.controls.target) + radius * 20;
+    next.updateProjectionMatrix();
+
+    this.projection = projection;
+    this.camera = next;
+    this.controls.setCamera(next);
+    this.controls.update();
+  }
+
+  /** A sphere containing everything worth framing; the fallback matches the empty scene's grid. */
+  private viewRadius(): number {
+    const handle = this.active;
+    if (handle !== null && !handle.box.isEmpty()) {
+      return Math.max(handle.box.getBoundingSphere(new THREE.Sphere()).radius, 0.001);
+    }
+    return 60;
+  }
+
+  /** Canvas aspect; framing needs it for either projection, and the entity panel resizes around it. */
+  get viewportAspect(): number {
+    return Math.max(this.canvas.clientWidth, 1) / Math.max(this.canvas.clientHeight, 1);
+  }
+
+  /** Perspective framing is a distance from the focal point; the limiting half-angle accounts for the viewport. */
+  private fitDistance(radius: number): number {
+    const verticalFov = THREE.MathUtils.degToRad(PERSPECTIVE_FOV);
+    const fov = Math.min(verticalFov, 2 * Math.atan(Math.tan(verticalFov / 2) * this.viewportAspect));
+    return (radius / Math.sin(fov / 2)) * 1.08;
+  }
+
+  /** The orthographic equivalent: a unit frustum scaled by zoom, so fit is a single number. */
+  private fitZoom(radius: number): number {
+    return Math.min(1, this.viewportAspect) / (radius * 1.08);
+  }
+
+  /** World height the camera shows across the focal plane, whichever projection is active. */
+  private visibleHeight(): number {
+    if (isOrthographic(this.camera)) {
+      return 2 / this.camera.zoom;
+    }
+    return 2 * Math.tan(THREE.MathUtils.degToRad(PERSPECTIVE_FOV) / 2) * this.camera.position.distanceTo(this.controls.target);
+  }
+
+  private currentZoom(): number {
+    return isOrthographic(this.camera) ? this.camera.zoom : 1;
+  }
+
+  private applyZoom(zoom: number): void {
+    if (isOrthographic(this.camera)) {
+      this.camera.zoom = zoom;
+    }
   }
 
   /** Direct cube dragging interrupts a pending snap at its current pose. */
@@ -562,7 +674,13 @@ export class Stage {
     const pixelRatio = Math.min(window.devicePixelRatio, window.matchMedia("(pointer: coarse)").matches ? 1.5 : 2);
     this.renderer.setPixelRatio(pixelRatio);
     this.renderer.setSize(width, height, false);
-    this.camera.aspect = width / height;
+    if (isOrthographic(this.camera)) {
+      // The unit frustum is the vertical extent; width follows the viewport. Size stays in zoom.
+      this.camera.left = -(width / height);
+      this.camera.right = width / height;
+    } else {
+      this.camera.aspect = width / height;
+    }
     this.camera.updateProjectionMatrix();
     this.controls.handleResize();
   }
@@ -591,6 +709,11 @@ export class Stage {
       this.camera.position.set(0, 0, THREE.MathUtils.lerp(transition.fromDistance, transition.distance, eased))
         .applyQuaternion(this.camera.quaternion).add(this.controls.target);
       this.camera.up.set(0, 1, 0).applyQuaternion(this.camera.quaternion);
+      if (isOrthographic(this.camera)) {
+        // Orthographic framing lives in the zoom, so the size interpolates separately from the pose.
+        this.camera.zoom = THREE.MathUtils.lerp(transition.fromZoom, transition.zoom, eased);
+        this.camera.updateProjectionMatrix();
+      }
       if (t === 1) {
         this.camera.up.copy(transition.up);
         this.viewTransition = null;
@@ -621,6 +744,14 @@ export class Stage {
     }
     this.controls.dispose();
   }
+}
+
+/**
+ * three marks cameras with runtime flags, but its typings declare them as plain booleans, so they
+ * cannot narrow a union on their own.
+ */
+function isOrthographic(camera: THREE.PerspectiveCamera | THREE.OrthographicCamera): camera is THREE.OrthographicCamera {
+  return (camera as { isOrthographicCamera?: boolean }).isOrthographicCamera === true;
 }
 
 function disposeObject(root: THREE.Object3D): void {

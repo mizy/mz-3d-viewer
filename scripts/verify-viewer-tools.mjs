@@ -203,6 +203,12 @@ try {
     const cubeMatrix = await page.locator(".cube").getAttribute("style");
 
     const cdp = await context.newCDPSession(page);
+
+      // Tapping the summary blindly toggles it, and an earlier check may have left it open.
+      const openCameraPanel = () => page.evaluate(() => {
+        const details = document.getElementById("cameraDetails");
+        if (details !== null && !details.open) details.querySelector("summary").click();
+      });
     const x = width / 2, y = height * 0.43;
     await cdp.send("Input.dispatchTouchEvent", { type: "touchStart", touchPoints: [{ x, y, id: 0 }] });
     await cdp.send("Input.dispatchTouchEvent", { type: "touchMove", touchPoints: [{ x: x + 45, y: y + 20, id: 0 }] });
@@ -271,6 +277,61 @@ try {
         console.log(`  ✓ ${kind}: cube faces, post-script drag, touch rotate, pinch`);
       }
       await page.evaluate(() => window.__mzViewer.setController("orbit"));
+
+      // Projection: orthographic is a parallel projection over the same framing, so the model has to
+      // keep its screen size, the cube faces still land exactly, and the wheel now changes the zoom
+      // rather than the camera distance.
+      const coverage = () => page.evaluate(() => {
+        const stage = window.__mzViewer.stage;
+        const box = stage.active.box;
+        const corners = [];
+        for (const x of [box.min.x, box.max.x]) {
+          for (const y of [box.min.y, box.max.y]) {
+            for (const z of [box.min.z, box.max.z]) {
+              corners.push(new (stage.camera.position.constructor)(x, y, z).project(stage.camera));
+            }
+          }
+        }
+        const xs = corners.map((corner) => corner.x);
+        const ys = corners.map((corner) => corner.y);
+        return { width: Math.max(...xs) - Math.min(...xs), height: Math.max(...ys) - Math.min(...ys) };
+      });
+      await page.locator("#fitBtn").tap();
+      await page.waitForTimeout(500);
+      const perspectiveCoverage = await coverage();
+      await page.locator("#sidebarToggle").tap();
+      await openCameraPanel();
+      await page.locator("label.chip:has(#projectionOrthographic)").tap();
+      await page.locator("#sidebarClose").tap();
+      await page.waitForTimeout(500);
+      assert.equal(await page.evaluate(() => window.__mzViewer.summary().projection), "orthographic", "sidebar pick switches the projection");
+      assert.equal(await page.evaluate(() => window.__mzViewer.stage.camera.isOrthographicCamera === true), true, "the rendering camera is orthographic");
+      const orthographicCoverage = await coverage();
+      assert(Math.abs(orthographicCoverage.height - perspectiveCoverage.height) / perspectiveCoverage.height < 0.2,
+        `switching projection keeps the framing (${perspectiveCoverage.height.toFixed(2)} -> ${orthographicCoverage.height.toFixed(2)} of NDC height)`);
+      for (const [key, axis, sign] of [["1", "z", 1], ["5", "y", 1], ["3", "x", -1]]) {
+        await page.locator("#navCube").press(key);
+        await page.waitForFunction(({ axis, sign }) => {
+          const stage = window.__mzViewer.stage;
+          return stage.camera.position.clone().sub(stage.controls.target).normalize()[axis] * sign > 0.99999;
+        }, { axis, sign });
+      }
+      const orthoBefore = await page.evaluate(() => ({
+        zoom: window.__mzViewer.stage.camera.zoom,
+        distance: window.__mzViewer.stage.camera.position.distanceTo(window.__mzViewer.stage.controls.target)
+      }));
+      const wheelCanvas = await page.locator("#view").boundingBox();
+      await page.mouse.move(wheelCanvas.x + wheelCanvas.width / 2, wheelCanvas.y + wheelCanvas.height / 2);
+      await page.mouse.wheel(0, -240);
+      await page.waitForTimeout(300);
+      const orthoAfter = await page.evaluate(() => ({
+        zoom: window.__mzViewer.stage.camera.zoom,
+        distance: window.__mzViewer.stage.camera.position.distanceTo(window.__mzViewer.stage.controls.target)
+      }));
+      assert(orthoAfter.zoom > orthoBefore.zoom, "orthographic wheel zoom changes the zoom");
+      assert(Math.abs(orthoAfter.distance - orthoBefore.distance) < 1e-6, "orthographic zoom leaves the camera distance alone");
+      console.log("  ✓ orthographic: framing kept, cube faces land, wheel zooms the frustum");
+      await page.evaluate(() => window.__mzViewer.setProjection("perspective"));
     }
 
     await page.locator("#sidebarToggle").tap();
@@ -323,21 +384,25 @@ try {
       assert.equal(await page.evaluate(() => window.__mzViewer.stage.modelList.length), 3, "drops outside the canvas load the file");
       console.log("  ✓ dropping a file anywhere in the window loads it");
 
-      // The picker is the real UI path, and the choice is meant to outlive a reload.
+      // The pickers are the real UI path, and both choices are meant to outlive a reload.
       await page.locator("#sidebarToggle").tap();
-      await page.locator("#cameraDetails summary").tap();
+      await openCameraPanel();
       await page.locator("#controllerSelect").selectOption("arcball");
+      await page.locator("label.chip:has(#projectionOrthographic)").tap();
       assert.equal(await page.evaluate(() => window.__mzViewer.summary().controller), "arcball", "sidebar pick switches the controller");
       await page.keyboard.press("Escape");
       await page.reload();
       await page.waitForFunction(() => window.__mzViewer !== undefined);
       assert.equal(await page.evaluate(() => window.__mzViewer.summary().controller), "arcball", "controller choice survives a reload");
+      assert.equal(await page.evaluate(() => window.__mzViewer.summary().projection), "orthographic", "projection choice survives a reload");
       await page.locator("#sidebarToggle").tap();
-      await page.locator("#cameraDetails summary").tap();
+      await openCameraPanel();
       assert.equal(await page.locator("#controllerSelect").inputValue(), "arcball", "select reflects the remembered controller");
+      assert.equal(await page.locator("#projectionOrthographic").isChecked(), true, "chips reflect the remembered projection");
       await page.locator("#controllerSelect").selectOption("orbit");
+      await page.locator("label.chip:has(#projectionPerspective)").tap();
       await page.keyboard.press("Escape");
-      console.log("  ✓ controller pick is remembered across a reload");
+      console.log("  ✓ controller and projection picks are remembered across a reload");
 
       // The brand is the in-app way home: no reload, and the model does not need re-opening.
       await page.locator("#demoBtn").tap();

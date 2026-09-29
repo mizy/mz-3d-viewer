@@ -101,12 +101,16 @@
       <label class="row switch-row">环境反射 <input type="checkbox" id="environmentToggle" checked /></label>
     </section>
     <details class="panel" id="cameraDetails"><summary>视角操作</summary>
+      <div class="row" role="radiogroup" aria-label="投影方式">
+        <label class="chip"><input type="radio" name="projection" id="projectionPerspective" checked />透视</label>
+        <label class="chip"><input type="radio" name="projection" id="projectionOrthographic" />正交</label>
+      </div>
       <label class="row">控制器<select id="controllerSelect" aria-label="相机控制器">
         <option value="orbit" selected>轨道 Orbit</option>
         <option value="arcball">旋转球 Arcball</option>
         <option value="trackball">轨迹球 Trackball</option>
       </select></label>
-      <p class="panel-note">轨道围绕目标点旋转、上下受限；旋转球没有上下限制，可以连续翻转；轨迹球自由翻滚，接近传统 CAD 手感。选择会记住，画布拖动与 NavCube 在三种模式下都可用。</p>
+      <p class="panel-note">正交是平行投影，没有近大远小，量尺寸和对比工程图时更准确；透视更接近人眼观感。轨道围绕目标点旋转、上下受限；旋转球没有上下限制，可以连续翻转；轨迹球自由翻滚，接近传统 CAD 手感。选择会记住，画布拖动与 NavCube 在两种投影下都可用。</p>
     </details>
     <details class="panel" id="sectionDetails"><summary>剖面分析</summary>
       <label class="row switch-row">启用剖面 <input type="checkbox" id="sectionToggle" /></label>

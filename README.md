@@ -32,7 +32,8 @@ on phones it opens as a bottom sheet (swipe the heading down to close).
 
 - **NavCube:** tap a face for a 400ms eased camera/cube transition, or drag to take over immediately. Reduced-motion preferences skip the animation. Keyboard: arrows rotate, 1–6 select front/back/left/right/top/bottom, Home selects isometric.
 - **Axis triad:** the cube carries the axes itself — the three edges of the corner nearest the eye turn into X/Y/Z (red/green/blue, letters at the tips) and swap corner as the camera turns. A face-on view collapses whichever axis points at you into a dot, and the cube's own white edges are what the coloured arms land on: the overlay is projected with the same CSS perspective the cube is drawn with, so they coincide exactly and no second GPU canvas is needed.
-- **Camera model:** the sidebar picks between 轨道 Orbit (target-locked, poles clamped), 旋转球 Arcball (no polar clamp, unlimited flipping) and 轨迹球 Trackball (free rolling, closest to a traditional CAD feel). All three share framing, section, NavCube and screenshot behaviour, and the choice is remembered across reloads.
+- **Projection:** 透视 Perspective or 正交 Orthographic. Orthographic is a parallel projection — no near-is-far-larger, so a front elevation is a true elevation and measurements hold across the frame; the switch carries the pose and the scale at the focal point across, so the model does not jump, and it is remembered across reloads.
+- **Camera model:** the sidebar picks between 轨道 Orbit (target-locked, poles clamped), 旋转球 Arcball (no polar clamp, unlimited flipping) and 轨迹球 Trackball (free rolling, closest to a traditional CAD feel). All three work in either projection and share framing, section, NavCube and screenshot behaviour; the choice is remembered too.
 - **Home:** the MZ logo (top-left) clears the scene and returns to the landing state in place, without a reload; the anchor keeps its `href`, so ⌘/middle click still opens a clean copy. It carries a full 44px target with hover feedback.
 - **Grid:** off on first load. The sidebar switch or `g` turns the floor grid on.
 - **Environment:** a studio environment map painted in code (no HDR to download, still offline) lights the scene and gives glass, paint and chrome something to reflect. Without it a window is effectively invisible: a dielectric reflects about 4%, so the glass only shows the cabin behind it. The sidebar switch turns it off for flat, light-only shading.
@@ -49,7 +50,9 @@ It covers four viewport sizes, actual touch events, exact reassembly under neste
 edge alignment, six cube faces, single-mesh handling and console/network errors. Every camera
 model gets its own pass: cube faces, the first drag after a scripted view (a controller that
 rebuilds the pose from a cached matrix snaps back instead of continuing), touch rotate, pinch,
-and the sidebar pick surviving a reload. It also pins the cube's axis edges per standard view
+and the sidebar picks surviving a reload. Orthographic gets its own pass: the framing has to keep
+its screen size, the cube faces still land exactly, and the wheel changes the zoom rather than the
+camera distance. It also pins the cube's axis edges per standard view
 (horizontal/vertical arms, and the axis facing the eye collapsing to a dot), checks the brand
 returns to the landing state, that the floor grid starts hidden, and drops a file on the top bar,
 the dock and the body to prove the browser default is cancelled everywhere.
