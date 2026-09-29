@@ -27,7 +27,10 @@ a { color: inherit; text-decoration: none; }
 .glass { background: #151e25eb; border: 1px solid #ffffff16; box-shadow: 0 12px 48px #0005, inset 0 1px #ffffff08; backdrop-filter: blur(24px); -webkit-backdrop-filter: blur(24px); }
 .topbar { position: absolute; top: max(24px, env(safe-area-inset-top)); left: max(32px, env(safe-area-inset-left)); right: max(32px, env(safe-area-inset-right)); display: flex; justify-content: space-between; align-items: center; pointer-events: none; }
 .topbar > * { pointer-events: auto; }
-.brand { display: flex; align-items: center; gap: 11px; font-size: 19px; font-weight: 650; letter-spacing: -.03em; }
+/* The brand is the way home, so it carries a full-size target rather than a text-sized one. */
+.brand { display: flex; align-items: center; gap: 11px; padding: 12px 14px; margin: -12px -14px; min-height: 44px; border-radius: 12px; font-size: 19px; font-weight: 650; letter-spacing: -.03em; }
+.brand:hover { background: #ffffff0a; }
+.brand:active { background: #ffffff16; }
 .brand > .icon { width: 28px; height: 28px; color: var(--accent); stroke-width: 1.2; }
 .brand-light { font-weight: 400; color: #8b9a9f; }
 .topbar-actions { display: flex; align-items: center; gap: 22px; }
@@ -78,12 +81,13 @@ h1 span { color: var(--accent); }
 .nav-home { position: relative; z-index: 1; display: grid; place-items: center; width: 44px; height: 44px; background: transparent; border: 0; color: #7d9b8e; border-radius: 12px; }
 .nav-home .icon { width: 16px; height: 16px; }
 .nav-home:hover { background: #ffffff0a; color: var(--accent); }
-.axis-gizmo { width: 44px; height: 44px; margin-top: 2px; overflow: visible; }
-.axis-arm { stroke-width: 2; stroke-linecap: round; }
-.axis-arm.axis-x { stroke: #ff8080; }
-.axis-arm.axis-y { stroke: #8ee6a8; }
-.axis-arm.axis-z { stroke: #7fb0ff; }
-.axis-label { font-size: 9px; font-weight: 600; text-anchor: middle; dominant-baseline: middle; }
+/* The triad rides on the cube: the three edges of the corner nearest the eye are the axes. */
+.axis-overlay { position: absolute; inset: 0; overflow: visible; pointer-events: none; }
+.axis-edge { stroke-width: 3; stroke-linecap: round; }
+.axis-edge.axis-x, .axis-dot.axis-x { stroke: #ff8080; fill: #ff8080; }
+.axis-edge.axis-y, .axis-dot.axis-y { stroke: #8ee6a8; fill: #8ee6a8; }
+.axis-edge.axis-z, .axis-dot.axis-z { stroke: #7fb0ff; fill: #7fb0ff; }
+.axis-label { font-size: 9px; font-weight: 700; text-anchor: middle; dominant-baseline: middle; }
 .axis-label.axis-x { fill: #ff8080; }
 .axis-label.axis-y { fill: #8ee6a8; }
 .axis-label.axis-z { fill: #7fb0ff; }

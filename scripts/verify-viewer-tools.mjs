@@ -17,6 +17,14 @@ try {
     page.on("response", (response) => { if (response.status() >= 400) errors.push(`${response.status()} ${response.url()}`); });
     await page.goto(url);
     await page.waitForFunction(() => window.__mzViewer !== undefined);
+
+    // The floor grid starts hidden; the sidebar switch and `g` are the only ways to show it.
+    assert.equal(await page.evaluate(() => window.__mzViewer.summary().gridVisible), false, "floor grid starts hidden");
+    await page.keyboard.press("g");
+    assert.equal(await page.evaluate(() => window.__mzViewer.summary().gridVisible), true, "g shows the floor grid");
+    await page.keyboard.press("g");
+    assert.equal(await page.evaluate(() => window.__mzViewer.summary().gridVisible), false, "g hides it again");
+
     await page.locator("#demoBtn").tap();
     await page.waitForFunction(() => window.__mzViewer.stage.active?.parts.length === 11);
     const assembled = await page.evaluate(() => window.__mzViewer.stage.active.parts.map((part) => part.mesh.matrix.toArray()));
@@ -153,25 +161,33 @@ try {
       return stage.camera.position.clone().sub(stage.controls.target).normalize().x < -0.999;
     }), "reduced motion uses immediate view switching");
 
-    // The axis triad is the camera's own basis projected to screen space: a standard view puts a
-    // different axis at the centre, and the axis pointing at the eye is the bright, unoccluded one.
-    const axisLabel = (axis) => page.evaluate((axis) => {
-      const label = document.querySelector(`#axisGizmo .axis-label.axis-${axis}`);
-      return { x: Number(label.getAttribute("x")), y: Number(label.getAttribute("y")), opacity: Number(label.getAttribute("opacity")) };
+    // The triad rides on the cube: the three edges of the corner nearest the eye are the axes, so a
+    // face-on view collapses whichever axis points at the viewer into a dot.
+    const axisArm = (axis) => page.evaluate((axis) => {
+      const overlay = document.querySelector("#navCube .axis-overlay");
+      const edge = overlay.querySelector(`.axis-edge.axis-${axis}`);
+      const dot = overlay.querySelector(`.axis-dot.axis-${axis}`);
+      return {
+        dx: Number(edge.getAttribute("x2")) - Number(edge.getAttribute("x1")),
+        dy: Number(edge.getAttribute("y2")) - Number(edge.getAttribute("y1")),
+        shown: edge.getAttribute("opacity") !== "0",
+        dot: dot.getAttribute("opacity") === "1"
+      };
     }, axis);
-    const centred = (label) => Math.hypot(label.x - 22, label.y - 22) < 1.5;
+    const horizontal = (arm) => arm.shown && Math.abs(arm.dy) < 2 && Math.abs(arm.dx) > 20;
+    const vertical = (arm) => arm.shown && Math.abs(arm.dx) < 2 && Math.abs(arm.dy) > 20;
+    assert(await page.evaluate(() => document.getElementById("axisGizmo") === null && document.querySelector("#navCube .axis-overlay") !== null), "the triad is merged into the cube");
     await page.locator("#navCube").press("1");
     await page.waitForTimeout(60);
-    const frontAxes = { x: await axisLabel("x"), y: await axisLabel("y"), z: await axisLabel("z") };
-    assert(frontAxes.x.x > 34 && Math.abs(frontAxes.x.y - 22) < 1.5, "front view points the X axis right");
-    assert(frontAxes.y.y < 10 && Math.abs(frontAxes.y.x - 22) < 1.5, "front view points the Y axis up");
-    assert(centred(frontAxes.z) && frontAxes.z.opacity > 0.95 && frontAxes.x.opacity < 0.8, "front view centres Z and lights the near axis");
+    const frontArms = { x: await axisArm("x"), y: await axisArm("y"), z: await axisArm("z") };
+    assert(horizontal(frontArms.x) && vertical(frontArms.y), "front view runs X and Y along the square's edges");
+    assert(!frontArms.z.shown && frontArms.z.dot, "front view collapses the Z axis into a dot");
     await page.locator("#navCube").press("5");
     await page.waitForTimeout(60);
-    const topAxes = { x: await axisLabel("x"), y: await axisLabel("y"), z: await axisLabel("z") };
-    assert(centred(topAxes.y) && topAxes.y.opacity > 0.95, "top view centres the Y axis");
-    assert(topAxes.z.y > 34 && Math.abs(topAxes.z.x - 22) < 1.5, "top view points the Z axis down");
-    console.log("  ✓ axis triad follows the camera");
+    const topArms = { x: await axisArm("x"), y: await axisArm("y"), z: await axisArm("z") };
+    assert(horizontal(topArms.x) && vertical(topArms.z), "top view runs X and Z along the square's edges");
+    assert(!topArms.y.shown && topArms.y.dot, "top view collapses the Y axis into a dot");
+    console.log("  ✓ the cube's corner edges carry the axes");
     await page.locator("#navCube").press("3");
 
     await page.emulateMedia({ reducedMotion: "no-preference" });
@@ -265,7 +281,7 @@ try {
     await page.locator("#sectionToggle").uncheck();
     await page.keyboard.press("Escape");
     assert.equal(await page.locator("#settingsPanel").isVisible(), false, "Escape closes modal");
-    assert(await page.evaluate(() => [...document.querySelectorAll(".dock-btn, #openBtn")].every((element) => {
+    assert(await page.evaluate(() => [...document.querySelectorAll(".dock-btn, #openBtn, .brand")].every((element) => {
       const rect = element.getBoundingClientRect();
       return rect.left >= 0 && rect.right <= innerWidth && rect.height >= 44 && rect.bottom <= innerHeight;
     })), "touch controls fit the viewport");
@@ -322,6 +338,19 @@ try {
       await page.locator("#controllerSelect").selectOption("orbit");
       await page.keyboard.press("Escape");
       console.log("  ✓ controller pick is remembered across a reload");
+
+      // The brand is the in-app way home: no reload, and the model does not need re-opening.
+      await page.locator("#demoBtn").tap();
+      await page.waitForFunction(() => window.__mzViewer.stage.active?.parts.length === 11);
+      await page.locator("#entitiesBtn").tap();
+      assert.equal(await page.locator("#entitiesPanel").isVisible(), true, "part panel is open before going home");
+      await page.locator(".brand").tap();
+      assert.equal(await page.evaluate(() => window.__mzViewer.stage.modelList.length), 0, "brand clears the scene");
+      assert.equal(await page.locator("#dropHint").isVisible(), true, "brand returns to the landing state");
+      assert.equal(await page.locator("#navigation").isVisible(), false, "navigation hides with no model");
+      assert.equal(await page.locator("#entitiesPanel").isVisible(), false, "part panel closes with no model");
+      assert.equal(await page.locator("#openBtn").isVisible(), true, "opening works again from the landing state");
+      console.log("  ✓ brand returns to the landing state");
     }
 
     if (width === 390) {

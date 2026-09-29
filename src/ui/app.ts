@@ -368,6 +368,9 @@ export function createApp(stage: Stage, backend: Backend, forceWebGL: boolean): 
   gridToggle.addEventListener("change", () => {
     stage.setGridVisible(gridToggle.checked);
   });
+  // The control, not the stage, owns the default: the grid starts hidden and only the user shows it.
+  stage.setGridVisible(gridToggle.checked);
+
 
   function applySection(): void {
     const enabled = sectionToggle.checked;
@@ -423,6 +426,27 @@ export function createApp(stage: Stage, backend: Backend, forceWebGL: boolean): 
   }
 
   // ------------------------------------------------------------------ buttons
+
+  /**
+   * The brand is the in-app way home: it clears the scene and reframes the default view without
+   * reloading. The anchor keeps its href, so ⌘/middle click still opens a clean copy.
+   */
+  function goHome(): void {
+    for (const handle of [...stage.modelList]) {
+      stage.removeModel(handle.id);
+    }
+    stage.setStandardView("iso", false);
+    renderModelList();
+    renderStats();
+  }
+
+  el<HTMLAnchorElement>("brandLink").addEventListener("click", (event) => {
+    if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) {
+      return;
+    }
+    event.preventDefault();
+    goHome();
+  });
 
   openBtn.addEventListener("click", () => fileInput.click());
   el<HTMLButtonElement>("emptyOpenBtn").addEventListener("click", () => fileInput.click());
@@ -508,7 +532,7 @@ export function createApp(stage: Stage, backend: Backend, forceWebGL: boolean): 
     if (event.clientY - sheetStartY > 65) setSidebarOpen(false);
   });
 
-  createNavCube(stage, el<HTMLElement>("navCube"), el<SVGSVGElement>("axisGizmo"));
+  createNavCube(stage, el<HTMLElement>("navCube"));
   el<HTMLButtonElement>("isoBtn").addEventListener("click", () => stage.setStandardView("iso"));
   explodeRange.addEventListener("input", () => {
     stage.setExplode(Number(explodeRange.value) / 100);

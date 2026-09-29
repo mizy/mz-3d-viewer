@@ -39,13 +39,13 @@
   </main>
 
   <header class="topbar">
-    <a class="brand" href="./" aria-label="MZ 3D 首页"><svg class="icon" aria-hidden="true"><use href="#i-cube"/></svg><span>MZ<span class="brand-light"> / 3D</span></span></a>
+    <a id="brandLink" class="brand" href="./" title="回到首页" aria-label="MZ 3D 首页（回到首页）"><svg class="icon" aria-hidden="true"><use href="#i-cube"/></svg><span>MZ<span class="brand-light"> / 3D</span></span></a>
     <div class="topbar-actions"><span class="local-label"><svg class="icon" aria-hidden="true"><use href="#i-lock"/></svg> 本地 · 私密</span><button id="openBtn" class="btn btn-open" type="button"><svg class="icon" aria-hidden="true"><use href="#i-plus"/></svg><span>打开模型</span></button></div>
   </header>
   <div class="model-caption"><span class="live-dot"></span><span id="activeName">无限视角，尽在本地。</span></div>
 
   <div class="navigation" id="navigation" aria-label="视角导航">
-    <div id="navCube" class="navcube" tabindex="0" role="group" aria-label="导航立方体：拖动旋转，点击面切换视角。方向键旋转，数字 1 到 6 切换六面，Home 回到等轴视图。">
+    <div id="navCube" class="navcube" tabindex="0" role="group" aria-label="导航立方体：拖动旋转，点击面切换视角。方向键旋转，数字 1 到 6 切换六面，Home 回到等轴视图；最近一角的三条棱显示 X/Y/Z 轴向。">
       <div class="cube">
         <button type="button" class="cube-face front" data-view="front" tabindex="-1" aria-label="前视图">前</button>
         <button type="button" class="cube-face back" data-view="back" tabindex="-1" aria-label="后视图">后</button>
@@ -54,16 +54,15 @@
         <button type="button" class="cube-face top" data-view="top" tabindex="-1" aria-label="顶视图">顶</button>
         <button type="button" class="cube-face bottom" data-view="bottom" tabindex="-1" aria-label="底视图">底</button>
       </div>
+      <svg class="axis-overlay" aria-hidden="true" focusable="false">
+        <line class="axis-edge axis-x" /><line class="axis-edge axis-y" /><line class="axis-edge axis-z" />
+        <circle class="axis-dot axis-x" r="2.6" /><circle class="axis-dot axis-y" r="2.6" /><circle class="axis-dot axis-z" r="2.6" />
+        <text class="axis-label axis-x">X</text>
+        <text class="axis-label axis-y">Y</text>
+        <text class="axis-label axis-z">Z</text>
+      </svg>
     </div>
     <button id="isoBtn" class="nav-home" type="button" aria-label="等轴视图" title="等轴视图"><svg class="icon" aria-hidden="true"><use href="#i-home"/></svg></button>
-    <svg id="axisGizmo" class="axis-gizmo" viewBox="0 0 44 44" aria-hidden="true" focusable="false">
-      <line class="axis-arm axis-x" x1="22" y1="22" x2="22" y2="22" />
-      <line class="axis-arm axis-y" x1="22" y1="22" x2="22" y2="22" />
-      <line class="axis-arm axis-z" x1="22" y1="22" x2="22" y2="22" />
-      <text class="axis-label axis-x" x="22" y="22">X</text>
-      <text class="axis-label axis-y" x="22" y="22">Y</text>
-      <text class="axis-label axis-z" x="22" y="22">Z</text>
-    </svg>
   </div>
 
   <div id="explodePanel" class="explode-panel glass" popover="auto">
@@ -98,7 +97,7 @@
         <label class="chip"><input type="radio" name="style" id="styleWireframe" />线框</label>
         <label class="chip"><input type="radio" name="style" id="styleXray" />透射</label>
       </div>
-      <label class="row switch-row">地板网格 <input type="checkbox" id="gridToggle" checked /></label>
+      <label class="row switch-row">地板网格 <input type="checkbox" id="gridToggle" /></label>
     </section>
     <details class="panel" id="cameraDetails"><summary>视角操作</summary>
       <label class="row">控制器<select id="controllerSelect" aria-label="相机控制器">

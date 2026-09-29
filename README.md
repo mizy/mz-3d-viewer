@@ -31,8 +31,10 @@ separates assembly parts and fits the model. Advanced settings live in a native 
 on phones it opens as a bottom sheet (swipe the heading down to close).
 
 - **NavCube:** tap a face for a 400ms eased camera/cube transition, or drag to take over immediately. Reduced-motion preferences skip the animation. Keyboard: arrows rotate, 1–6 select front/back/left/right/top/bottom, Home selects isometric.
-- **Axis triad:** under the cube, the world X/Y/Z axes are drawn as the camera sees them — the axis pointing at you is the bright one, the axis pointing away is dimmed and painted behind, so the drawing reads as a solid object. It needs no second GPU canvas.
+- **Axis triad:** the cube carries the axes itself — the three edges of the corner nearest the eye turn into X/Y/Z (red/green/blue, letters at the tips) and swap corner as the camera turns. A face-on view collapses whichever axis points at you into a dot, and the cube's own white edges are what the coloured arms land on: the overlay is projected with the same CSS perspective the cube is drawn with, so they coincide exactly and no second GPU canvas is needed.
 - **Camera model:** the sidebar picks between 轨道 Orbit (target-locked, poles clamped), 旋转球 Arcball (no polar clamp, unlimited flipping) and 轨迹球 Trackball (free rolling, closest to a traditional CAD feel). All three share framing, section, NavCube and screenshot behaviour, and the choice is remembered across reloads.
+- **Home:** the MZ logo (top-left) clears the scene and returns to the landing state in place, without a reload; the anchor keeps its `href`, so ⌘/middle click still opens a clean copy. It carries a full 44px target with hover feedback.
+- **Grid:** off on first load. The sidebar switch or `g` turns the floor grid on.
 - **Open files:** the picker, or a drop anywhere in the window — top bar, dock and nav cube included. A file drag is announced over the whole window, cancels the browser's own "open this file" default, and closes the workspace panel so the drop target stays visible.
 - **Explode:** first opening animates to 50%. Slider changes and fully separated / reassemble use a 400ms transition with matching camera framing; reopening preserves the chosen value. Offsets belong to the active model, edge lines follow the parts, and dimensions retain their assembled values.
 - **X-ray:** a translucent cyan inspection mode; leaving it restores imported materials. Selected parts stay highlighted.
@@ -46,9 +48,10 @@ It covers four viewport sizes, actual touch events, exact reassembly under neste
 edge alignment, six cube faces, single-mesh handling and console/network errors. Every camera
 model gets its own pass: cube faces, the first drag after a scripted view (a controller that
 rebuilds the pose from a cached matrix snaps back instead of continuing), touch rotate, pinch,
-and the sidebar pick surviving a reload. It also pins the axis triad to the projected camera
-basis per standard view, and drops a file on the top bar, the dock and the body to prove the
-browser default is cancelled everywhere.
+and the sidebar pick surviving a reload. It also pins the cube's axis edges per standard view
+(horizontal/vertical arms, and the axis facing the eye collapsing to a dot), checks the brand
+returns to the landing state, that the floor grid starts hidden, and drops a file on the top bar,
+the dock and the body to prove the browser default is cancelled everywhere.
 
 ## Architecture
 
@@ -65,7 +68,7 @@ browser default is cancelled everywhere.
 | `src/viewer/appearance.ts` | original mesh materials, X-ray and selection overrides; owned by each stage model |
 | `src/ui/entities.ts` | named part list and inspection controls; initialized by `createApp` |
 | `src/viewer/demo.ts` | procedural sample assembly used by the empty-state demo button |
-| `src/ui/navCube.ts` | camera-synced CSS cube plus the camera-projected axis triad, and pointer/keyboard navigation; initialized by `createApp` |
+| `src/ui/navCube.ts` | camera-synced CSS cube, the X/Y/Z edges it carries (projected with the cube's own perspective), and pointer/keyboard navigation; initialized by `createApp` |
 | `src/ui/app.ts` | DOM wiring only: files (picker and window-wide drops), list, settings, progress, stats, test hooks |
 | `src/pwa/register.ts` | service worker registration + update reload + OS file handlers |
 | `src/pwa/cadEngineWarm.ts` | page-driven download of the 7.6MB OpenCascade engine into the SW cache, verified byte-for-byte, skipped when already cached |
