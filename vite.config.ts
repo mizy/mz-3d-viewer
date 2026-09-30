@@ -4,6 +4,8 @@ import { defineConfig } from "vite";
 // "/mz-3d-viewer/" (GitHub Pages project site) without a rebuild.
 export default defineConfig({
   base: "./",
+  // The edge worker imports the core build; discover it before the first mode switch.
+  optimizeDeps: { include: ["three"] },
   build: {
     target: "es2022",
     assetsInlineLimit: 0,

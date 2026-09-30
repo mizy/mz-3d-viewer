@@ -71,8 +71,8 @@ try {
     await page.locator("#entitiesBtn").tap();
     assert.equal(await page.locator(".entity-name").count(), 11, "named parts listed");
     await page.locator("#entitySearch").fill("紧固件 3");
-    assert.equal(await page.locator(".entity-name").count(), 1, "filter parts by source name");
-    await page.locator(".entity-name").tap();
+    assert.equal(await page.locator(".entity-name:visible").count(), 1, "filter parts by source name");
+    await page.locator(".entity-name:visible").tap();
     assert(await page.evaluate(() => {
       const model = window.__mzViewer.stage.active;
       return model.parts[model.selectedPart].mesh.material === model.appearance.highlight;
@@ -100,7 +100,7 @@ try {
       return window.__mzViewer.stage.style === "xray" && model.appearance.surfaces.every(({ mesh }) => mesh.material.transparent && !mesh.material.depthWrite && mesh.material.opacity <= 0.3);
     }), "X-ray shows translucent surfaces");
     await page.locator("#entitiesBtn").tap();
-    await page.locator(".entity-name").tap();
+    await page.locator(".entity-name:visible").tap();
     await page.locator("#clearPartBtn").tap();
     // X-ray materials are per imported material (colors are preserved), so the restored material
     // is the one looked up in `appearance.xray` rather than a single shared material.

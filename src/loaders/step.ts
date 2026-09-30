@@ -1,5 +1,5 @@
 import * as THREE from "three/webgpu";
-import type { CancelSignal, ModelFormat, ParsedModel, ProgressReporter } from "./types";
+import type { ModelFormat, ParsedModel, ProgressReporter } from "./types";
 import { createCadFaceMaterial } from "./materials";
 import { assetUrl } from "../assetBase";
 import { describeError } from "./gltf";
@@ -37,16 +37,20 @@ export function loadCad(
   format: Extract<ModelFormat, "step" | "iges" | "brep">,
   quality: CadQuality,
   report: ProgressReporter,
-  signal: CancelSignal
+  signal: AbortSignal
 ): Promise<ParsedModel> {
   return new Promise<ParsedModel>((resolve, reject) => {
+    signal.throwIfAborted();
     const worker = new Worker(assetUrl("wasm/occt/step-worker.js"));
     const logs: string[] = [];
 
     const finish = (fn: () => void): void => {
+      signal.removeEventListener("abort", cancel);
       worker.terminate();
       fn();
     };
+    const cancel = (): void => finish(() => reject(signal.reason));
+    signal.addEventListener("abort", cancel, { once: true });
 
     worker.onerror = (event) => {
       finish(() => reject(new Error(`STEP 解析线程启动失败：${event.message}`)));
@@ -65,8 +69,8 @@ export function loadCad(
           finish(() => reject(new Error(message.error)));
           return;
         case "done": {
-          if (signal.cancelled) {
-            finish(() => reject(new Error("已取消")));
+          if (signal.aborted) {
+            cancel();
             return;
           }
           const warnings = collectEngineWarnings(logs);
@@ -85,8 +89,8 @@ export function loadCad(
     void file
       .arrayBuffer()
       .then((buffer) => {
-        if (signal.cancelled) {
-          finish(() => reject(new Error("已取消")));
+        if (signal.aborted) {
+          cancel();
           return;
         }
         report({ ratio: null, label: "OpenCascade 细分中…" });

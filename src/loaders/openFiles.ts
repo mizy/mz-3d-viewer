@@ -1,11 +1,11 @@
 import type * as THREE from "three/webgpu";
-import type { FileBundle } from "./obj";
-import { createFileBundle, loadObj } from "./obj";
+import { createFileBundle } from "./files";
+import { loadObj } from "./obj";
 import { loadStl } from "./stl";
 import { loadGltf } from "./gltf";
 import { loadThreeMf } from "./three-mf";
 import { loadCad, type CadQuality } from "./step";
-import type { CancelSignal, ModelFormat, ParsedModel, ProgressReporter } from "./types";
+import type { ModelFormat, ParsedModel, ProgressReporter } from "./types";
 
 const EXTENSION_TO_FORMAT: Record<string, ModelFormat> = {
   stl: "stl",
@@ -35,7 +35,7 @@ export type OpenContext = {
   renderer: THREE.WebGPURenderer;
   quality: CadQuality;
   report: ProgressReporter;
-  signal: CancelSignal;
+  signal: AbortSignal;
 };
 
 /** Files the user drops that we know how to open. Companions (.mtl, textures, .bin) are not primaries. */
@@ -48,15 +48,15 @@ export async function parseOne(file: File, allFiles: File[], context: OpenContex
   if (format === null) {
     throw new Error(`不支持的文件类型：${file.name}`);
   }
-  const bundle: FileBundle = createFileBundle(allFiles);
+  context.signal.throwIfAborted();
 
   switch (format) {
     case "stl":
       return loadStl(await file.arrayBuffer(), file.name);
     case "obj":
-      return loadObj(file, bundle);
+      return loadObj(file, createFileBundle(allFiles));
     case "gltf":
-      return loadGltf(await file.arrayBuffer(), file.name, context.renderer);
+      return loadGltf(await file.arrayBuffer(), file.name, context.renderer, createFileBundle(allFiles));
     case "3mf":
       return loadThreeMf(await file.arrayBuffer(), file.name);
     case "step":

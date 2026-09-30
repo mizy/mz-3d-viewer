@@ -16,6 +16,7 @@ pnpm build            # vite build + dist/sw.js (precache manifest + build hash)
 pnpm serve:dist       # serve dist/ exactly like GitHub Pages (static, cache-control: max-age=600)
 pnpm verify           # built-site acceptance run in real Chrome
 pnpm verify:tools     # touch, NavCube and explode checks against the running dev server
+pnpm verify:loading   # import resources, cancellation, edge workers and idle rendering
 pnpm samples:3mf      # regenerate the committed 3MF samples (millimetre + inch)
 pnpm typecheck
 ```
@@ -41,6 +42,8 @@ on phones it opens as a bottom sheet (swipe the heading down to close).
 - **Explode:** first opening animates to 50%. Slider changes and fully separated / reassemble use a 400ms transition with matching camera framing; reopening preserves the chosen value. Offsets belong to the active model, edge lines follow the parts, and dimensions retain their assembled values.
 - **X-ray:** a translucent cyan inspection mode; leaving it restores imported materials. Selected parts stay highlighted.
 - **Entities:** search parts by their imported names, select/highlight, hide/show, isolate, restore all or frame a part. On mobile the list reserves its own space beneath the canvas.
+- **Idle rendering:** camera inertia and transitions keep updating; a stationary scene skips GPU redraws until a model, setting, camera or screenshot changes.
+- **Cancellation:** cancelling a CAD import terminates its worker immediately. Edge calculations also run in a worker, share one pending task per model, and stop when the display mode or edge angle changes.
 - **Parts:** independent mesh roots from the imported hierarchy. A single-mesh STL cannot be split into semantic components. No geometry is modified or guessed apart.
 - **Demo:** “体验装配示例” opens an 11-part local procedural assembly.
 - **Touch:** one finger rotates, two fingers pan/pinch. Mobile rendering caps pixel density at 1.5; framing accounts for narrow viewports.
@@ -71,6 +74,9 @@ the dock and the body to prove the browser default is cancelled everywhere.
 | `src/loaders/step.ts` + `public/wasm/occt/step-worker.js` | OpenCascade wasm in a classic worker (7.6MB, never on the main thread) |
 | `src/viewer/explode.ts` | independent mesh discovery, original matrices and parent-local separation offsets; consumed by `Stage` |
 | `src/viewer/appearance.ts` | original mesh materials, X-ray and selection overrides; owned by each stage model |
+| `src/viewer/dispose.ts` | releases model geometry, materials, textures and ImageBitmaps; shared by removal and cancelled imports |
+| `src/viewer/edges.ts` + `edges.worker.ts` | off-thread edge geometry, transferred attribute copies, cancellation and live source transforms |
+| `src/loaders/files.ts` | OBJ/glTF companion resolution, waiting for dependencies and releasing temporary object URLs |
 | `src/ui/entities.ts` | named part list and inspection controls; initialized by `createApp` |
 | `src/viewer/demo.ts` | procedural sample assembly used by the empty-state demo button |
 | `src/ui/navCube.ts` | camera-synced CSS cube, the X/Y/Z edges it carries (projected with the cube's own perspective), and pointer/keyboard navigation; initialized by `createApp` |
@@ -96,6 +102,12 @@ because GitHub Pages' `cache-control: max-age=600` otherwise makes "offline" pas
 worker at all.
 
 Run the same suite against the deployment: `node scripts/verify-site.mjs --url=https://mizy.github.io/mz-3d-viewer/`（远程模式自动把超时放宽 4 倍）。
+
+`pnpm verify:loading --url=http://localhost:8901/` runs the import regressions against a built preview.
+It checks external glTF BIN/PNG files, OBJ/glTF object URL cleanup, texture and ImageBitmap disposal,
+immediate CAD worker cancellation, a 120,000-triangle STL's edge worker responsiveness, rapid edge
+retargets, stable entity rows, stationary rendering and simultaneous screenshot requests. The built-site
+suite also seeds another app's caches and verifies that service-worker activation preserves them.
 
 ## Format notes
 
@@ -131,3 +143,5 @@ through GitHub Pages (Pages source = GitHub Actions, no build output committed).
 URLs, so the site works from `/` and from `/<repo>/` without a rebuild. The sidebar shows the build
 hash; compare it with the newest commit when investigating "I still see the old version" reports —
 the service worker plus Pages' fixed `cache-control: max-age=600` are the usual suspects.
+Service-worker cache names include the site's scope; activation only removes older caches with that
+same scope, preserving other applications hosted on the same origin.

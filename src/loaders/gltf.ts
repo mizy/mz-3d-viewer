@@ -4,11 +4,13 @@ import { DRACOLoader } from "three/addons/loaders/DRACOLoader.js";
 import { KTX2Loader } from "three/addons/loaders/KTX2Loader.js";
 import { MeshoptDecoder } from "three/addons/libs/meshopt_decoder.module.js";
 import type { ParsedModel } from "./types";
+import { loadWithFiles, type FileBundle } from "./files";
 
 export async function loadGltf(
   buffer: ArrayBuffer,
   fileName: string,
-  renderer: THREE.WebGPURenderer
+  renderer: THREE.WebGPURenderer,
+  bundle: FileBundle
 ): Promise<ParsedModel> {
   const warnings: string[] = [];
 
@@ -27,28 +29,30 @@ export async function loadGltf(
     warnings.push(`KTX2 检测失败，压缩贴图可能不显示：${describeError(error)}`);
   }
 
-  const loader = new GLTFLoader();
-  loader.setDRACOLoader(dracoLoader);
-  loader.setKTX2Loader(ktx2Loader);
-  loader.setMeshoptDecoder(MeshoptDecoder);
+  return loadWithFiles(bundle, warnings, async (manager) => {
+    const loader = new GLTFLoader(manager);
+    loader.setDRACOLoader(dracoLoader);
+    loader.setKTX2Loader(ktx2Loader);
+    loader.setMeshoptDecoder(MeshoptDecoder);
 
-  try {
-    const gltf = await loader.parseAsync(buffer, "");
-    let meshCount = 0;
-    gltf.scene.traverse((child) => {
-      if ((child as THREE.Mesh).isMesh === true) {
-        meshCount += 1;
-        (child as THREE.Mesh).geometry.computeBoundingBox();
+    try {
+      const gltf = await loader.parseAsync(buffer, "");
+      let meshCount = 0;
+      gltf.scene.traverse((child) => {
+        if ((child as THREE.Mesh).isMesh === true) {
+          meshCount += 1;
+          (child as THREE.Mesh).geometry.computeBoundingBox();
+        }
+      });
+      if (meshCount === 0) {
+        warnings.push(`${fileName} 里没有网格（可能只有相机/灯光/动画）`);
       }
-    });
-    if (meshCount === 0) {
-      warnings.push(`${fileName} 里没有网格（可能只有相机/灯光/动画）`);
+      return { format: "gltf", root: gltf.scene, warnings };
+    } finally {
+      dracoLoader.dispose();
+      ktx2Loader.dispose();
     }
-    return { format: "gltf", root: gltf.scene, warnings };
-  } finally {
-    dracoLoader.dispose();
-    ktx2Loader.dispose();
-  }
+  });
 }
 
 export function describeError(error: unknown): string {

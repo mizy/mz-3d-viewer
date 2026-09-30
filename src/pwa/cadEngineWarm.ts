@@ -127,8 +127,9 @@ type CadCacheState = { paths: Map<string, number> };
 
 async function readCadCache(): Promise<CadCacheState> {
   const paths = new Map<string, number>();
+  const scope = encodeURIComponent(new URL("./", assetUrl("sw.js")).pathname);
   for (const name of await caches.keys()) {
-    if (!name.startsWith("cad-")) {
+    if (!name.startsWith(`cad-${scope}-`)) {
       continue;
     }
     const cache = await caches.open(name);

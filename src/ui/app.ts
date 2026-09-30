@@ -7,7 +7,8 @@ import { convertLength } from "../viewer/stage";
 import { ACCEPTED_EXTENSIONS, parseOne, primaryFiles } from "../loaders/openFiles";
 import { CAD_QUALITY_PRESETS, type CadQuality } from "../loaders/step";
 import { describeError } from "../loaders/gltf";
-import type { CancelSignal, ParsedModel } from "../loaders/types";
+import type { ParsedModel } from "../loaders/types";
+import { disposeObject } from "../viewer/dispose";
 import type { ViewerTestHooks } from "./testHooks";
 import { describeWarmState, type CadEngineWarmState } from "../pwa/cadEngineWarm";
 
@@ -86,7 +87,7 @@ export function createApp(stage: Stage, backend: Backend, forceWebGL: boolean): 
   let unit: MeasurementUnit = "mm";
   let cadQuality: CadQuality = "standard";
   let busy = false;
-  let cancelSignal: CancelSignal | null = null;
+  let cancelController: AbortController | null = null;
   let toastTimer: number | null = null;
   let cadEngineState: CadEngineWarmState = { status: "idle", cachedBytes: 0, totalBytes: 0, detail: "" };
 
@@ -282,15 +283,16 @@ export function createApp(stage: Stage, backend: Backend, forceWebGL: boolean): 
     }
 
     busy = true;
-    const signal: CancelSignal = { cancelled: false };
-    cancelSignal = signal;
+    const controller = new AbortController();
+    const signal = controller.signal;
+    cancelController = controller;
     setStatus("解析中…");
 
     try {
       let opened = 0;
       const notes: string[] = [];
       for (const file of primaries) {
-        if (signal.cancelled) {
+        if (signal.aborted) {
           break;
         }
         showProgress(`读取 ${file.name}`, null);
@@ -300,7 +302,8 @@ export function createApp(stage: Stage, backend: Backend, forceWebGL: boolean): 
           signal,
           report: ({ label, ratio }) => showProgress(`${file.name} · ${label}`, ratio)
         });
-        if (signal.cancelled) {
+        if (signal.aborted) {
+          disposeObject(parsed.root);
           break;
         }
         const handle = stage.addModel(parsed, file.name);
@@ -310,7 +313,7 @@ export function createApp(stage: Stage, backend: Backend, forceWebGL: boolean): 
         notes.push(...parsed.warnings);
       }
 
-      if (signal.cancelled) {
+      if (signal.aborted) {
         toast("已取消", "warn");
       } else if (opened > 0) {
         setSidebarOpen(false);
@@ -323,13 +326,15 @@ export function createApp(stage: Stage, backend: Backend, forceWebGL: boolean): 
       await stage.setDisplayStyle(stage.style, reportEdgeProgress);
     } catch (error) {
       const message = describeError(error);
-      if (message !== "已取消") {
+      if (signal.aborted) {
+        toast("已取消", "warn");
+      } else {
         toast(`打开失败：${message}`, "error", 9000);
         setStatus("打开失败");
       }
     } finally {
       busy = false;
-      cancelSignal = null;
+      cancelController = null;
       hideProgress();
       renderModelList();
       renderStats();
@@ -491,9 +496,7 @@ export function createApp(stage: Stage, backend: Backend, forceWebGL: boolean): 
   });
 
   cancelBtn.addEventListener("click", () => {
-    if (cancelSignal !== null) {
-      cancelSignal.cancelled = true;
-    }
+    cancelController?.abort();
   });
 
   shotBtn.addEventListener("click", () => {

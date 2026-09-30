@@ -2,6 +2,8 @@ import * as THREE from "three/webgpu";
 import { ControllerHost, type ControllerKind } from "./controller";
 import { createStudioEnvironment } from "./environment";
 import { collectParts, explodeParts, type ExplodePart } from "./explode";
+import { createEdges } from "./edges";
+import { disposeObject } from "./dispose";
 import type { ParsedModel } from "../loaders/types";
 import { createAppearance, applyAppearance, disposeAppearance, type ModelAppearance, type DisplayStyle } from "./appearance";
 export type { DisplayStyle } from "./appearance";
@@ -28,6 +30,7 @@ export type ModelHandle = {
   stats: ModelStats;
   edges: THREE.Group | null;
   edgeAngleUsed: number | null;
+  edgeBuild: { abort: AbortController; promise: Promise<void> } | null;
   parts: ExplodePart[];
   appearance: ModelAppearance;
   selectedPart: number | null;
@@ -93,7 +96,8 @@ export class Stage {
   private sectionEnabled = false;
   private sectionAxis: SectionAxis = "x";
   private sectionRatio = 0.5;
-  private captureResolve: ((dataUrl: string) => void) | null = null;
+  private readonly captures: ((dataUrl: string) => void)[] = [];
+  private needsRender = true;
   private nextModelIndex = 1;
   private viewTransition: {
     started: number;
@@ -137,6 +141,7 @@ export class Stage {
     this.camera = this.perspectiveCamera;
 
     this.controls = new ControllerHost(this.camera, canvas, this.scene, "orbit");
+    this.controls.addEventListener("change", () => { this.needsRender = true; });
     // Any direct canvas gesture takes over from a scripted transition, whatever controller is
     // active (OrbitControls' own "start" event has no equivalent on the other two).
     const interrupt = (): void => { this.viewTransition = null; };
@@ -167,6 +172,7 @@ export class Stage {
       stats: { vertices: 0, triangles: 0, bytes: 0, size: new THREE.Vector3() },
       edges: null,
       edgeAngleUsed: null,
+      edgeBuild: null,
       parts: [],
       appearance: createAppearance(parsed.root),
       selectedPart: null,
@@ -198,6 +204,7 @@ export class Stage {
       return;
     }
     const handle = this.models[index];
+    handle.edgeBuild?.abort.abort();
     this.clippingGroup.remove(handle.root);
     disposeAppearance(handle.appearance);
     disposeObject(handle.root);
@@ -212,6 +219,7 @@ export class Stage {
       this.activeId = next === undefined ? null : next.id;
     }
     this.applySection();
+    this.needsRender = true;
   }
 
   setActive(handleId: string): void {
@@ -228,6 +236,7 @@ export class Stage {
       return;
     }
     handle.root.visible = visible;
+    this.needsRender = true;
     if (handle.edges !== null) {
       handle.edges.visible = visible && this.displayStyle === "edges";
     }
@@ -271,6 +280,7 @@ export class Stage {
     const handle = this.active;
     if (!handle || (index !== null && !handle.parts[index])) return;
     handle.selectedPart = index;
+    this.needsRender = true;
     applyAppearance(handle.appearance, this.displayStyle, index === null ? null : handle.parts[index].mesh);
   }
 
@@ -278,6 +288,7 @@ export class Stage {
     const handle = this.active;
     if (!handle?.parts[index]) return;
     handle.parts[index].mesh.visible = visible;
+    this.needsRender = true;
     this.syncEdgeVisibility(handle);
   }
 
@@ -286,6 +297,7 @@ export class Stage {
     if (!handle?.parts[index]) return;
     this.setVisible(handle.id, true);
     handle.parts.forEach((part, partIndex) => { part.mesh.visible = partIndex === index; });
+    this.needsRender = true;
     this.selectPart(index);
     this.syncEdgeVisibility(handle);
   }
@@ -295,6 +307,7 @@ export class Stage {
     if (!handle) return;
     this.setVisible(handle.id, true);
     for (const part of handle.parts) part.mesh.visible = true;
+    this.needsRender = true;
     this.syncEdgeVisibility(handle);
   }
 
@@ -321,23 +334,32 @@ export class Stage {
    */
   async setDisplayStyle(style: DisplayStyle, onEdgeProgress?: EdgeProgress): Promise<void> {
     this.displayStyle = style;
+    this.needsRender = true;
+    // Apply every surface immediately, before awaiting any edge calculation.
     for (const handle of this.models) {
       applyAppearance(handle.appearance, style, handle.selectedPart === null ? null : handle.parts[handle.selectedPart].mesh);
       if (style !== "edges") {
+        handle.edgeBuild?.abort.abort();
         if (handle.edges !== null) {
           handle.edges.visible = false;
         }
-        continue;
       }
+    }
+    if (style !== "edges") return;
+    for (const handle of [...this.models]) {
+      if (this.displayStyle !== "edges") break;
+      if (!this.models.includes(handle)) continue;
       await this.ensureEdges(handle, onEdgeProgress);
       if (handle.edges !== null) {
         handle.edges.visible = handle.root.visible && this.displayStyle === "edges";
+        this.needsRender = true;
       }
     }
   }
 
   setEdgeAngle(angleDeg: number): void {
     for (const handle of this.models) {
+      handle.edgeBuild?.abort.abort();
       if (handle.edges !== null) {
         this.clippingGroup.remove(handle.edges);
         disposeObject(handle.edges);
@@ -346,6 +368,7 @@ export class Stage {
       }
     }
     this.currentEdgeAngle = angleDeg;
+    this.needsRender = true;
   }
 
   private currentEdgeAngle = 30;
@@ -358,49 +381,24 @@ export class Stage {
     if (handle.edges !== null && handle.edgeAngleUsed === this.currentEdgeAngle) {
       return;
     }
-    if (handle.edges !== null) {
-      this.clippingGroup.remove(handle.edges);
-      disposeObject(handle.edges);
-      handle.edges = null;
-    }
+    if (handle.edgeBuild && !handle.edgeBuild.abort.signal.aborted) return handle.edgeBuild.promise;
     const angle = this.currentEdgeAngle;
-    const meshes: THREE.Mesh[] = [];
-    handle.root.traverse((child) => {
-      if ((child as THREE.Mesh).isMesh === true) {
-        meshes.push(child as THREE.Mesh);
-      }
+    const abort = new AbortController();
+    const promise = createEdges(handle.root, angle, abort.signal, onProgress).then((group) => {
+      if (abort.signal.aborted || !this.models.includes(handle)) { disposeObject(group); return; }
+      group.name = `${handle.name}-edges`;
+      handle.edges = group;
+      handle.edgeAngleUsed = angle;
+      this.clippingGroup.add(group);
+      this.syncEdgeVisibility(handle);
+      this.needsRender = true;
+    }).catch((error: unknown) => {
+      if (!abort.signal.aborted) throw error;
+    }).finally(() => {
+      if (handle.edgeBuild?.abort === abort) handle.edgeBuild = null;
     });
-
-    const group = new THREE.Group();
-    group.name = `${handle.name}-edges`;
-    const material = new THREE.LineBasicMaterial({ color: 0x2b3644 });
-    let done = 0;
-    for (const mesh of meshes) {
-      const edges = new THREE.EdgesGeometry(mesh.geometry, angle);
-      if (edges.getAttribute("position").count > 0) {
-        const lines = new THREE.LineSegments(edges, material);
-        lines.matrixAutoUpdate = false;
-        // Share the live source transform so edges follow exploded parts.
-        lines.matrix = mesh.matrixWorld;
-        group.add(lines);
-      } else {
-        edges.dispose();
-      }
-      done += 1;
-      onProgress?.(done, meshes.length);
-      // Yield so a big assembly does not block the frame loop.
-      await new Promise((resolve) => setTimeout(resolve, 0));
-    }
-    if (!this.models.includes(handle) || angle !== this.currentEdgeAngle || handle.edges !== null) {
-      disposeObject(group);
-      return;
-    }
-    group.matrixAutoUpdate = false;
-    group.updateMatrix();
-    handle.edges = group;
-    handle.edgeAngleUsed = angle;
-    this.clippingGroup.add(group);
-    this.syncEdgeVisibility(handle);
+    handle.edgeBuild = { abort, promise };
+    return promise;
   }
 
   /** @entry Explode only the active model; physical dimensions remain assembled dimensions. */
@@ -419,6 +417,7 @@ export class Stage {
   }
 
   private applyExplode(handle: ModelHandle, ratio: number): void {
+    this.needsRender = true;
     handle.explode = ratio;
     explodeParts(handle.parts, handle.explode);
     handle.box.setFromObject(handle.root);
@@ -432,6 +431,7 @@ export class Stage {
 
   setGridVisible(visible: boolean): void {
     this.grid.visible = visible;
+    this.needsRender = true;
   }
 
   get controllerKind(): ControllerKind {
@@ -446,6 +446,7 @@ export class Stage {
   setEnvironment(enabled: boolean): void {
     this.environmentOn = enabled;
     this.scene.environment = enabled ? this.environment : null;
+    this.needsRender = true;
   }
 
   /** Swaps the camera navigation model, keeping the current pose and focal point. */
@@ -466,6 +467,7 @@ export class Stage {
   }
 
   private applySection(): void {
+    this.needsRender = true;
     const handle = this.active;
     if (!this.sectionEnabled || handle === null || handle.box.isEmpty()) {
       this.clippingGroup.clippingPlanes = [];
@@ -494,6 +496,7 @@ export class Stage {
   }
 
   private fitBounds(box: THREE.Box3, animate: boolean): void {
+    this.needsRender = true;
     this.viewTransition = null;
     const sphere = box.getBoundingSphere(new THREE.Sphere());
     const radius = Math.max(sphere.radius, 0.001);
@@ -526,6 +529,7 @@ export class Stage {
   }
 
   setStandardView(view: StandardView, animate = true): void {
+    this.needsRender = true;
     const handle = this.active;
     const target = handle === null || handle.box.isEmpty()
       ? new THREE.Vector3(0, 0, 0)
@@ -611,6 +615,7 @@ export class Stage {
     next.updateProjectionMatrix();
 
     this.projection = projection;
+    this.needsRender = true;
     this.camera = next;
     this.controls.setCamera(next);
     this.controls.update();
@@ -669,6 +674,7 @@ export class Stage {
   // ---------------------------------------------------------------- frame loop
 
   resize(): void {
+    this.needsRender = true;
     const width = Math.max(this.canvas.clientWidth, 1);
     const height = Math.max(this.canvas.clientHeight, 1);
     const pixelRatio = Math.min(window.devicePixelRatio, window.matchMedia("(pointer: coarse)").matches ? 1.5 : 2);
@@ -688,7 +694,7 @@ export class Stage {
   /** Captures the very next rendered frame. Reading the canvas after the frame is what makes this reliable on WebGPU. */
   captureNextFrame(): Promise<string> {
     return new Promise<string>((resolve) => {
-      this.captureResolve = resolve;
+      this.captures.push(resolve);
     });
   }
 
@@ -702,6 +708,7 @@ export class Stage {
     }
     const transition = this.viewTransition;
     if (transition) {
+      this.needsRender = true;
       const t = Math.min((performance.now() - transition.started) / 400, 1);
       const eased = t * t * (3 - 2 * t);
       this.controls.target.lerpVectors(transition.fromTarget, transition.target, eased);
@@ -727,22 +734,22 @@ export class Stage {
       // NavCube listens to this same event during both orbit gestures and animated snaps.
       this.controls.notifyChange();
     } else this.controls.update();
+    if (!this.needsRender && !this.captures.length) return;
+    this.needsRender = false;
     this.renderer.render(this.scene, this.camera);
-    if (this.captureResolve !== null) {
-      const resolve = this.captureResolve;
-      this.captureResolve = null;
-      resolve(this.renderer.domElement.toDataURL("image/png"));
+    if (this.captures.length) {
+      const dataUrl = this.renderer.domElement.toDataURL("image/png");
+      for (const resolve of this.captures.splice(0)) resolve(dataUrl);
     }
   }
 
   dispose(): void {
     this.renderer.setAnimationLoop(null);
     this.environment.dispose();
-    for (const handle of this.models) {
-      disposeAppearance(handle.appearance);
-      disposeObject(handle.root);
-    }
+    for (const handle of [...this.models]) this.removeModel(handle.id);
+    disposeObject(this.grid);
     this.controls.dispose();
+    this.renderer.dispose();
   }
 }
 
@@ -752,16 +759,4 @@ export class Stage {
  */
 function isOrthographic(camera: THREE.PerspectiveCamera | THREE.OrthographicCamera): camera is THREE.OrthographicCamera {
   return (camera as { isOrthographicCamera?: boolean }).isOrthographicCamera === true;
-}
-
-function disposeObject(root: THREE.Object3D): void {
-  const materials = new Set<THREE.Material>();
-  root.traverse((child) => {
-    const mesh = child as THREE.Mesh;
-    if (mesh.isMesh === true || (child as THREE.LineSegments).isLineSegments === true) {
-      mesh.geometry.dispose();
-      for (const material of Array.isArray(mesh.material) ? mesh.material : [mesh.material]) materials.add(material);
-    }
-  });
-  for (const material of materials) material.dispose();
 }

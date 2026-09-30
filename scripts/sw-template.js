@@ -12,8 +12,11 @@ const BUILD = "__BUILD__";
 const PRECACHE = __PRECACHE__;
 const CAD_ENGINE = __CAD_ENGINE__;
 
-const SHELL_CACHE = `shell-${BUILD}`;
-const CAD_CACHE = `cad-${BUILD}`;
+const SCOPE = encodeURIComponent(new URL("./", self.location.href).pathname);
+const SHELL_PREFIX = `shell-${SCOPE}-`;
+const CAD_PREFIX = `cad-${SCOPE}-`;
+const SHELL_CACHE = `${SHELL_PREFIX}${BUILD}`;
+const CAD_CACHE = `${CAD_PREFIX}${BUILD}`;
 
 self.addEventListener("install", (event) => {
   event.waitUntil(
@@ -39,7 +42,9 @@ self.addEventListener("activate", (event) => {
     (async () => {
       const keep = new Set([SHELL_CACHE, CAD_CACHE]);
       const names = await caches.keys();
-      await Promise.all(names.filter((name) => !keep.has(name)).map((name) => caches.delete(name)));
+      await Promise.all(names.filter((name) =>
+        (name.startsWith(SHELL_PREFIX) || name.startsWith(CAD_PREFIX)) && !keep.has(name)
+      ).map((name) => caches.delete(name)));
       await self.clients.claim();
     })()
   );
@@ -60,7 +65,8 @@ async function handleNavigate(request) {
   } catch (error) {
     // offline: fall through to the cached shell
   }
-  const cached = (await caches.match("./index.html")) || (await caches.match(request));
+  const cache = await caches.open(SHELL_CACHE);
+  const cached = (await cache.match("./index.html")) || (await cache.match(request));
   if (cached !== undefined) {
     return cached;
   }
@@ -68,14 +74,14 @@ async function handleNavigate(request) {
 }
 
 async function handleAsset(request) {
-  const cached = await caches.match(request);
+  const cacheName = isCadEngine(new URL(request.url)) ? CAD_CACHE : SHELL_CACHE;
+  const cache = await caches.open(cacheName);
+  const cached = await cache.match(request);
   if (cached !== undefined) {
     return cached;
   }
   const response = await fetch(request);
   if (response.ok && request.method === "GET") {
-    const cacheName = isCadEngine(new URL(request.url)) ? CAD_CACHE : SHELL_CACHE;
-    const cache = await caches.open(cacheName);
     await cache.put(new Request(request.url), response.clone());
   }
   return response;

@@ -12,6 +12,7 @@
     "serve:dist": "node scripts/serve-dist.mjs",
     "verify": "node scripts/verify-site.mjs",
     "verify:tools": "node scripts/verify-viewer-tools.mjs",
+    "verify:loading": "node scripts/verify-loading.mjs",
     "icons": "python3 scripts/make-icons.py",
     "samples:3mf": "python3 scripts/make-3mf-samples.py"
   },

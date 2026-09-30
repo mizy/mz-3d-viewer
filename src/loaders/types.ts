@@ -18,5 +18,3 @@ export type LoadProgress = {
 };
 
 export type ProgressReporter = (progress: LoadProgress) => void;
-
-export type CancelSignal = { cancelled: boolean };

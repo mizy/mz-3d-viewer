@@ -210,6 +210,20 @@ async function loadSample(files) {
 
 // ---------------------------------------------------------------- 1. boot
 
+if (remoteUrl === null) {
+  // Seed another application's caches before this worker's first activation.
+  await page.addInitScript((base) => {
+    if (sessionStorage.getItem("cache-isolation-seeded")) return;
+    sessionStorage.setItem("cache-isolation-seeded", "1");
+    const seeded = Promise.all([
+      caches.open("unrelated-app"),
+      caches.open("shell-%2Fother-app%2F-current"),
+      caches.open(`shell-${encodeURIComponent(base)}-obsolete`)
+    ]);
+    const register = navigator.serviceWorker.register.bind(navigator.serviceWorker);
+    navigator.serviceWorker.register = (...args) => seeded.then(() => register(...args));
+  }, base);
+}
 await boot();
 check("启动：WebGPU 后端", (await page.textContent("#backendBadge")) === "WebGPU", await page.textContent("#backendBadge"));
 check("启动：GPU 适配器可用", (await page.evaluate(async () => (await navigator.gpu?.requestAdapter()) !== null)) === true);
@@ -403,7 +417,8 @@ const swState = await page.evaluate(async () => {
   const registration = await navigator.serviceWorker.getRegistration();
   if (registration === undefined || registration === null) return "未注册";
   const names = await caches.keys();
-  const shell = names.find((name) => name.startsWith("shell-"));
+  const scope = encodeURIComponent(new URL(registration.scope).pathname);
+  const shell = names.find((name) => name.startsWith(`shell-${scope}-`));
   const cache = await caches.open(shell);
   const keys = (await cache.keys()).map((request) => new URL(request.url).pathname);
   const unhashed = keys.filter((key) => /assets\/index\.(js|css)$/.test(key));
@@ -419,6 +434,10 @@ const swState = await page.evaluate(async () => {
   };
 });
 check("Service Worker 已注册并接管页面", swState.controlled === true && swState.scope === base, JSON.stringify({ scope: swState.scope, controlled: swState.controlled }));
+if (remoteUrl === null) {
+  check("SW 只清理本项目旧缓存，保留同源其他应用", swState.names.includes("unrelated-app") &&
+    swState.names.includes("shell-%2Fother-app%2F-current") && !swState.names.includes(`shell-${encodeURIComponent(base)}-obsolete`));
+}
 check("外壳预缓存：哈希资源 + worker + 图标", swState.hasHashedShell === true && swState.hasWorker === true && swState.hasIcons === true,
   `${swState.entries} 个条目，缓存 ${(swState.names ?? []).join(", ")}`);
 
@@ -430,8 +449,10 @@ const cadReady = await page
   .catch(() => false);
 const cadCached = await page.evaluate(async () => {
   const sizes = {};
+  const registration = await navigator.serviceWorker.getRegistration();
+  const prefix = `cad-${encodeURIComponent(new URL(registration.scope).pathname)}-`;
   for (const name of await caches.keys()) {
-    if (!name.startsWith("cad-")) continue;
+    if (!name.startsWith(prefix)) continue;
     const cache = await caches.open(name);
     for (const request of await cache.keys()) {
       const response = await cache.match(request);
