@@ -116,20 +116,22 @@ suite also seeds another app's caches and verifies that service-worker activatio
   `LoadingManager` URL modifier. Without an `.mtl` the mesh still loads and a warning says so.
 - **3MF** — a ZIP/OPC package read with three's bundled fflate (no extra dependency): core geometry,
   components, base materials, textures and vertex colours, plus beam lattices. The `unit` the package
-  declares is applied to the model, because three's loader only stores that attribute — the stage
-  reads every length as millimetres, so an inch file would otherwise report a 25.4× larger part.
-  That folding is announced in the toast rather than done silently.
+  declares (or its millimetre default) is applied to the model, because three's loader only stores
+  that attribute. The source-unit label distinguishes declared, default and unreadable units.
 - **glTF/GLB** — Draco and meshopt decoders ship through three's `new URL(..., import.meta.url)` assets;
   KTX2 compressed textures depend on the backend supporting them and warn instead of failing the load.
+  glTF's metre coordinates are converted to millimetres for the scene and dimensions.
 - **STEP / IGES / BREP** — tessellated by OpenCascade. Quality preset (快速 / 标准 / 精细) controls
-  `linearDeflection`/`angularDeflection`; large assemblies want 快速.
+  `linearDeflection`/`angularDeflection`; large assemblies want 快速. STEP/IGES output is explicitly
+  millimetres. BREP has no reliable unit declaration.
 
 ## Known limits
 
 - glTF files that reference external `.bin`/textures by relative path only work when those files are
   opened together with the `.gltf` (there is no server directory to fetch siblings from).
-- Units: lengths are treated as millimetres for the bounding-box readout; the unit selector converts
-  the readout, it does not rescale geometry.
+- Units: STL, OBJ and BREP do not provide reliable source units. Their bounding boxes show file
+  coordinates until the user sets a source unit for that model, which rescales its scene geometry
+  and dimensions. The separate display-unit selector only changes the readout.
 - Section view clips without capping the cut, so a hollow part shows its interior.
 - The OpenCascade engine is a one-time 7.6MB download (cached per build, then available offline).
   The sidebar footer reports its state; on a slow link the first STEP file is slow, later ones are not.

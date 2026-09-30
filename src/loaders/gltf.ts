@@ -47,7 +47,9 @@ export async function loadGltf(
       if (meshCount === 0) {
         warnings.push(`${fileName} 里没有网格（可能只有相机/灯光/动画）`);
       }
-      return { format: "gltf", root: gltf.scene, warnings };
+      // glTF 2.0 defines linear distances in metres; Stage measures in millimetres.
+      gltf.scene.scale.multiplyScalar(1000);
+      return { format: "gltf", root: gltf.scene, sourceUnit: { label: "米 m（glTF 规范）", mmPerUnit: 1000 }, warnings };
     } finally {
       dracoLoader.dispose();
       ktx2Loader.dispose();

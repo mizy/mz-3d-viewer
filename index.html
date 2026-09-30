@@ -119,7 +119,9 @@
     </details>
     <details class="panel"><summary>模型信息与精度</summary>
       <dl id="statsBox" class="stats"></dl>
-      <label class="row">单位<select id="unitSelect"><option value="mm">毫米 mm</option><option value="cm">厘米 cm</option><option value="m">米 m</option><option value="in">英寸 in</option></select></label>
+      <label class="row">源单位<select id="sourceUnitSelect" aria-label="当前模型源单位"><option value="">选择源单位</option><option value="mm">毫米 mm</option><option value="cm">厘米 cm</option><option value="m">米 m</option><option value="in">英寸 in</option></select></label>
+      <label class="row">显示单位<select id="unitSelect"><option value="mm">毫米 mm</option><option value="cm">厘米 cm</option><option value="m">米 m</option><option value="in">英寸 in</option></select></label>
+      <p class="panel-note">源单位决定文件坐标的实际尺寸，仅单位未知的模型需要指定；显示单位只改变读数。</p>
       <label class="row">CAD 精度<select id="cadQualitySelect"><option value="fast">快速</option><option value="standard" selected>标准</option><option value="fine">精细</option></select></label>
       <label class="row">边线角度<select id="edgeAngleSelect"><option value="15">15°</option><option value="30" selected>30°</option><option value="45">45°</option></select></label>
     </details>

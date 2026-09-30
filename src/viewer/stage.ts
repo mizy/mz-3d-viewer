@@ -16,7 +16,7 @@ export type ModelStats = {
   vertices: number;
   triangles: number;
   bytes: number;
-  /** Bounding box size in source units (mm for CAD/STL, assumed mm for everything else). */
+  /** Assembled bounding box in mm when source units are known, otherwise file coordinates. */
   size: THREE.Vector3;
 };
 
@@ -24,6 +24,7 @@ export type ModelHandle = {
   id: string;
   name: string;
   format: string;
+  sourceUnit: ParsedModel["sourceUnit"];
   root: THREE.Object3D;
   bytes: number;
   box: THREE.Box3;
@@ -54,7 +55,7 @@ const VIEW_DIRECTIONS: Record<StandardView, THREE.Vector3> = {
 
 const UNIT_SCALE: Record<MeasurementUnit, number> = { mm: 1, cm: 0.1, m: 0.001, in: 1 / 25.4 };
 
-/** Converts a length measured in source units (assumed mm) into the unit the user reads. */
+/** Converts a millimetre length into the unit the user reads. */
 export function convertLength(valueInMm: number, unit: MeasurementUnit): number {
   return valueInMm * UNIT_SCALE[unit];
 }
@@ -166,6 +167,7 @@ export class Stage {
       id: `model-${this.nextModelIndex++}`,
       name: fileName,
       format: parsed.format,
+      sourceUnit: parsed.sourceUnit,
       root: parsed.root,
       bytes: 0,
       box: new THREE.Box3(),
@@ -195,6 +197,25 @@ export class Stage {
     }
     handle.bytes = bytes;
     handle.stats.bytes = bytes;
+  }
+
+  /** @entry Assign a missing file unit and update both scene scale and assembled dimensions. */
+  setSourceUnit(handleId: string, unit: MeasurementUnit): void {
+    const handle = this.find(handleId);
+    if (handle === null || (handle.sourceUnit.mmPerUnit !== null && !handle.sourceUnit.manualUnit)) return;
+    const mmPerUnit = 1 / UNIT_SCALE[unit];
+    const previous = handle.sourceUnit.mmPerUnit ?? 1;
+    const explode = handle.explodeTarget ?? 0;
+    explodeParts(handle.parts, 0);
+    handle.root.scale.multiplyScalar(mmPerUnit / previous);
+    handle.root.updateMatrixWorld(true);
+    handle.sourceUnit = { label: `${unit}（手动指定）`, mmPerUnit, manualUnit: unit };
+    this.recomputeBounds(handle);
+    handle.parts = collectParts(handle.root, handle.box);
+    handle.explodeTransition = null;
+    this.applyExplode(handle, explode);
+    this.setEdgeAngle(this.currentEdgeAngle);
+    this.fitToActive();
   }
 
   removeModel(handleId: string): void {

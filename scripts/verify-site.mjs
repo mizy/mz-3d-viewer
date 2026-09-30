@@ -336,12 +336,16 @@ await page.locator(".model-item .icon-btn").first().click();
 await page.waitForTimeout(300);
 check("重新显示模型", (await page.evaluate(() => window.__mzViewer.summary())).models[0].visible === true);
 
-const statsMm = await page.textContent("#statsBox");
+const statsRaw = await page.textContent("#statsBox");
 await page.locator("details").filter({ has: page.locator("#unitSelect") }).locator("summary").click();
 await page.selectOption("#unitSelect", "cm");
 await page.waitForTimeout(200);
+const statsUnknown = await page.textContent("#statsBox");
+check("未知源单位不随显示单位切换", statsRaw === statsUnknown && statsUnknown.includes("单位未知"));
+await page.selectOption("#sourceUnitSelect", "mm");
+await page.waitForTimeout(200);
 const statsCm = await page.textContent("#statsBox");
-check("单位切换改变包围盒读数", statsMm !== statsCm && statsCm.includes("cm"), statsCm.match(/[\d.]+ × [\d.]+ × [\d.]+/)?.[0] ?? "");
+check("指定源单位后显示厘米尺寸", statsUnknown !== statsCm && statsCm.includes("cm") && statsCm.includes("手动指定"), statsCm.match(/[\d.]+ × [\d.]+ × [\d.]+/)?.[0] ?? "");
 
 await page.click("#sidebarClose");
 await page.locator("#navCube").press("5");

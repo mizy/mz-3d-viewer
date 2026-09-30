@@ -56,7 +56,7 @@ export async function loadObj(objFile: File, bundle: FileBundle): Promise<Parsed
       throw new Error(`${objFile.name} 里没有可显示的网格（需要面数据 f ...）`);
     }
 
-    return { format: "obj", root, warnings };
+    return { format: "obj", root, sourceUnit: { label: "未知（OBJ 未声明单位）", mmPerUnit: null }, warnings };
   });
 }
 

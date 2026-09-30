@@ -5,6 +5,8 @@ export type ModelFormat = "stl" | "obj" | "gltf" | "3mf" | "step" | "iges" | "br
 
 export type ParsedModel = {
   format: ModelFormat;
+  /** Geometry has been converted to mm when known; unknown formats keep file coordinates. */
+  sourceUnit: { label: string; mmPerUnit: number | null; manualUnit?: "mm" | "cm" | "m" | "in" };
   /** The object tree to add to the scene. Owns its own materials. */
   root: THREE.Object3D;
   /** Non-fatal notes shown to the user (missing textures, unsupported extensions…). */

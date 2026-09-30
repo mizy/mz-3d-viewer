@@ -72,6 +72,7 @@ export function createApp(stage: Stage, backend: Backend, forceWebGL: boolean): 
   const sectionAxisSelect = el<HTMLSelectElement>("sectionAxisSelect");
   const sectionOffset = el<HTMLInputElement>("sectionOffset");
   const unitSelect = el<HTMLSelectElement>("unitSelect");
+  const sourceUnitSelect = el<HTMLSelectElement>("sourceUnitSelect");
   const edgeAngleSelect = el<HTMLSelectElement>("edgeAngleSelect");
   const cadQualitySelect = el<HTMLSelectElement>("cadQualitySelect");
   const controllerSelect = el<HTMLSelectElement>("controllerSelect");
@@ -238,24 +239,30 @@ export function createApp(stage: Stage, backend: Backend, forceWebGL: boolean): 
     statsBox.replaceChildren();
     const handle = stage.active;
     if (handle === null) {
+      sourceUnitSelect.disabled = true;
+      sourceUnitSelect.options[0].textContent = "选择源单位";
+      sourceUnitSelect.value = "";
       setStatus("等待文件");
       addStat("状态", "等待文件");
       return;
     }
     const size = handle.stats.size;
+    const manual = handle.sourceUnit.manualUnit !== undefined;
+    sourceUnitSelect.disabled = handle.sourceUnit.mmPerUnit !== null && !manual;
+    sourceUnitSelect.options[0].textContent = handle.sourceUnit.mmPerUnit === null ? "选择源单位" : "文件单位已确定";
+    sourceUnitSelect.options[0].disabled = manual;
+    sourceUnitSelect.value = handle.sourceUnit.manualUnit ?? "";
     addStat("文件", handle.name);
     addStat("格式", FORMAT_TITLES[handle.format] ?? handle.format);
+    addStat("源单位", handle.sourceUnit.label);
     addStat("顶点", handle.stats.vertices.toLocaleString());
     addStat("三角面", handle.stats.triangles.toLocaleString());
     addStat("独立网格部件", String(handle.parts.length));
-    addStat(
-      `包围盒 (${UNIT_LABEL[unit]})`,
-      [
-        convertLength(size.x, unit).toFixed(2),
-        convertLength(size.y, unit).toFixed(2),
-        convertLength(size.z, unit).toFixed(2)
-      ].join(" × ")
-    );
+    const dimensions = size.toArray().map((value) =>
+      (handle.sourceUnit.mmPerUnit === null ? value : convertLength(value, unit))
+        .toLocaleString("zh-CN", { maximumFractionDigits: 6 })
+    ).join(" × ");
+    addStat("包围盒 X × Y × Z", `${dimensions} ${handle.sourceUnit.mmPerUnit === null ? "文件坐标（单位未知）" : UNIT_LABEL[unit]}`);
     addStat("文件大小", `${(handle.bytes / 1024 / 1024).toFixed(2)} MB`);
     setStatus(`已加载 ${stage.modelList.length} 个模型`);
   }
@@ -397,6 +404,15 @@ export function createApp(stage: Stage, backend: Backend, forceWebGL: boolean): 
   unitSelect.addEventListener("change", () => {
     unit = unitSelect.value as MeasurementUnit;
     renderStats();
+  });
+
+  sourceUnitSelect.addEventListener("change", () => {
+    const active = stage.active;
+    const chosen = sourceUnitSelect.value as MeasurementUnit;
+    if (active === null || !(chosen in UNIT_LABEL)) return;
+    stage.setSourceUnit(active.id, chosen);
+    renderStats();
+    if (stage.style === "edges") void applyStyle("edges");
   });
 
   edgeAngleSelect.addEventListener("change", () => {
@@ -679,7 +695,7 @@ export function createApp(stage: Stage, backend: Backend, forceWebGL: boolean): 
         triangles: handle.stats.triangles,
         vertices: handle.stats.vertices,
         visible: stage.isVisible(handle.id),
-        sizeMm: [handle.stats.size.x, handle.stats.size.y, handle.stats.size.z]
+        sizeMm: handle.sourceUnit.mmPerUnit === null ? null : [handle.stats.size.x, handle.stats.size.y, handle.stats.size.z]
       })),
       activeId: stage.active?.id ?? null,
       style: stage.style,

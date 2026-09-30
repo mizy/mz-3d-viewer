@@ -21,12 +21,12 @@ const MODEL_PART = "3D/3dmodel.model";
 
 export async function loadThreeMf(buffer: ArrayBuffer, fileName: string): Promise<ParsedModel> {
   const warnings: string[] = [];
-  const unit = declaredUnit(buffer);
-  const scale = UNIT_TO_MM[unit];
+  const source = declaredUnit(buffer);
+  const scale = source === null ? undefined : UNIT_TO_MM[source.name];
   if (scale === undefined) {
-    warnings.push(`${fileName} 的单位「${unit}」无法识别，几何按毫米处理`);
+    warnings.push(`${fileName} 的源单位无法确认，尺寸按文件坐标显示`);
   } else if (scale !== 1) {
-    warnings.push(`${fileName} 声明单位 ${unit}，尺寸已折算为毫米（×${scale}）`);
+    warnings.push(`${fileName} 声明单位 ${source?.name}，尺寸已折算为毫米（×${scale}）`);
   }
 
   const root = new ThreeMFLoader().parse(buffer);
@@ -44,28 +44,33 @@ export async function loadThreeMf(buffer: ArrayBuffer, fileName: string): Promis
     root.scale.setScalar(scale);
     root.updateMatrixWorld(true);
   }
-  return { format: "3mf", root, warnings };
+  const label = scale === undefined ? "未知（无法读取 3MF 单位）" :
+    `${source?.name}（3MF ${source?.declared ? "声明" : "默认"}）`;
+  return { format: "3mf", root, sourceUnit: { label, mmPerUnit: scale ?? null }, warnings };
 }
 
 /**
  * Reads the declared unit straight out of the package. fflate's filter keeps the work on the
  * central directory plus the one XML part instead of inflating every mesh in the archive.
  */
-function declaredUnit(buffer: ArrayBuffer): string {
+function declaredUnit(buffer: ArrayBuffer): { name: string; declared: boolean } | null {
   try {
     const part = unzipSync(new Uint8Array(buffer), { filter: (entry) => entry.name === MODEL_PART })[MODEL_PART];
     if (part === undefined) {
-      return "millimeter";
+      return null;
     }
     // The unit lives in the root element, so the head is enough for anything written by a real
     // exporter; a pathological prologue falls back to decoding the whole part.
-    const head = parseUnit(strFromU8(part.subarray(0, 2048)));
-    return head ?? parseUnit(strFromU8(part)) ?? "millimeter";
+    const head = strFromU8(part.subarray(0, 2048));
+    const modelTag = /<model\b[^>]*>/.exec(head)?.[0] ?? /<model\b[^>]*>/.exec(strFromU8(part))?.[0];
+    if (modelTag === undefined) return null;
+    const name = parseUnit(modelTag);
+    return { name: name ?? "millimeter", declared: name !== null };
   } catch {
-    return "millimeter";
+    return null;
   }
 }
 
 function parseUnit(xml: string): string | null {
-  return /<model\b[^>]*\bunit="([^"]+)"/.exec(xml)?.[1] ?? null;
+  return /<model\b[^>]*\bunit\s*=\s*["']([^"']+)["']/.exec(xml)?.[1] ?? null;
 }

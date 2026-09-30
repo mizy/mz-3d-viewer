@@ -13,5 +13,5 @@ export function loadStl(buffer: ArrayBuffer, fileName: string): ParsedModel {
   const mesh = new THREE.Mesh(geometry, createDefaultModelMaterial());
   mesh.name = fileName;
 
-  return { format: "stl", root: mesh, warnings: [] };
+  return { format: "stl", root: mesh, sourceUnit: { label: "未知（STL 未声明单位）", mmPerUnit: null }, warnings: [] };
 }

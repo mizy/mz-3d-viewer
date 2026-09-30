@@ -12,7 +12,7 @@ export type ViewerTestHooks = {
   setController: (kind: ControllerKind) => void;
   setProjection: (projection: Projection) => void;
   summary: () => {
-    models: Array<{ id: string; name: string; format: string; triangles: number; vertices: number; visible: boolean; sizeMm: [number, number, number] }>;
+    models: Array<{ id: string; name: string; format: string; triangles: number; vertices: number; visible: boolean; sizeMm: [number, number, number] | null }>;
     activeId: string | null;
     style: string;
     gridVisible: boolean;

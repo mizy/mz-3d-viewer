@@ -75,7 +75,10 @@ export function loadCad(
           }
           const warnings = collectEngineWarnings(logs);
           try {
-            resolve({ format, root: buildGroup(message.meshes), warnings });
+            resolve({ format, root: buildGroup(message.meshes),
+              sourceUnit: format === "brep"
+                ? { label: "未知（BREP 无可靠单位）", mmPerUnit: null }
+                : { label: "毫米 mm（CAD 导入器输出）", mmPerUnit: 1 }, warnings });
           } catch (error) {
             reject(error instanceof Error ? error : new Error(describeError(error)));
           }
@@ -94,7 +97,8 @@ export function loadCad(
           return;
         }
         report({ ratio: null, label: "OpenCascade 细分中…" });
-        const params = CAD_QUALITY_PRESETS[quality];
+        const params = format === "brep" ? CAD_QUALITY_PRESETS[quality] :
+          { ...CAD_QUALITY_PRESETS[quality], linearUnit: "millimeter" };
         worker.postMessage({ format, buffer, params }, [buffer]);
       })
       .catch((error: unknown) => {

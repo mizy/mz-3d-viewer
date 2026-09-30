@@ -25,5 +25,5 @@ export function createDemo(): ParsedModel {
     add(`紧固件 ${i + 1}`, new THREE.CylinderGeometry(2.4, 2.4, 10, 6), silver,
       Math.cos(angle) * 26, 14, Math.sin(angle) * 26);
   }
-  return { format: "gltf", root, warnings: [] };
+  return { format: "gltf", root, sourceUnit: { label: "毫米 mm（内置示例）", mmPerUnit: 1 }, warnings: [] };
 }
