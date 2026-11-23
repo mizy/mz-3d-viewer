@@ -17,6 +17,7 @@ pnpm serve:dist       # serve dist/ exactly like GitHub Pages (static, cache-con
 pnpm verify           # built-site acceptance run in real Chrome
 pnpm verify:tools     # touch, NavCube and explode checks against the running dev server
 pnpm verify:loading   # import resources, cancellation, edge workers and idle rendering
+pnpm verify:launch    # OS file-handle launches and failure handling against a running site
 pnpm samples:3mf      # regenerate the committed 3MF samples (millimetre + inch)
 pnpm typecheck
 ```
@@ -24,6 +25,14 @@ pnpm typecheck
 `pnpm verify` needs a Chrome with WebGPU (macOS/Windows Chrome 113+). It serves the build at a
 sub-path (`/mz-3d-viewer/`) so the GitHub Pages layout is what gets tested. Flags: `--headless`,
 `--base=/`.
+
+## Open models from Finder
+
+Install the viewer with Chrome or Edge. In Finder, select a `.stl`, `.step` or `.stp` file,
+choose **Get Info → Open with → 3D 查看器 → Change All**, and confirm. Repeat for each file
+type if needed. The browser may ask for permission the first time it opens a file. If the app
+was installed before this support was available, update or reinstall it if it is not offered
+as an opener. Safari web apps do not currently support this file-handling API.
 
 ## Viewer controls
 

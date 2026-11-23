@@ -50,18 +50,18 @@ export function registerServiceWorker(onCadEngineState: (state: CadEngineWarmSta
 }
 
 /** Chrome/Edge hand OS-opened files to the PWA through launchQueue. */
-export function consumeLaunchQueue(onFiles: (files: File[]) => void): void {
+export function consumeLaunchQueue(onFiles: (files: File[]) => void, onError: (error: unknown) => void): void {
   const launchQueue = (
     window as unknown as {
-      launchQueue?: { setConsumer: (consumer: (params: { files?: File[] }) => void) => void };
+      launchQueue?: { setConsumer: (consumer: (params: { files: FileSystemFileHandle[] }) => void) => void };
     }
   ).launchQueue;
   if (launchQueue === undefined) {
     return;
   }
   launchQueue.setConsumer((params) => {
-    if (params.files !== undefined && params.files.length > 0) {
-      onFiles(params.files);
+    if (params.files.length > 0) {
+      void Promise.all(params.files.map((handle) => handle.getFile())).then(onFiles, onError);
     }
   });
 }

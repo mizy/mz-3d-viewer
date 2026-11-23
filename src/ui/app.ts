@@ -39,6 +39,8 @@ const FORMAT_TITLES: Record<string, string> = {
 export type AppHandle = {
   /** Called by the PWA layer as the OpenCascade engine download progresses. */
   setCadEngineState: (state: CadEngineWarmState) => void;
+  openFiles: (files: File[]) => Promise<void>;
+  reportFileOpenError: (error: unknown) => void;
 };
 
 export function createApp(stage: Stage, backend: Backend, forceWebGL: boolean): AppHandle {
@@ -715,7 +717,11 @@ export function createApp(stage: Stage, backend: Backend, forceWebGL: boolean): 
   renderStats();
   canvas.addEventListener("contextmenu", (event) => event.preventDefault());
 
-  return { setCadEngineState };
+  return {
+    setCadEngineState,
+    openFiles,
+    reportFileOpenError: (error) => toast(`读取文件失败：${describeError(error)}`, "error", 9000)
+  };
 }
 
 function stripExtension(name: string): string {

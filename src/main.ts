@@ -25,15 +25,6 @@ const app = createApp(stage, backend, forceWebGL);
 const resizeObserver = new ResizeObserver(() => stage.resize());
 resizeObserver.observe(canvas);
 
-consumeLaunchQueue((files) => {
-  // Reuse the file input path so drag/drop, picker and OS "open with" all behave the same.
-  const transfer = new DataTransfer();
-  for (const file of files) {
-    transfer.items.add(file);
-  }
-  const input = must<HTMLInputElement>("fileInput");
-  input.files = transfer.files;
-  input.dispatchEvent(new Event("change"));
-});
+consumeLaunchQueue((files) => void app.openFiles(files), app.reportFileOpenError);
 
 registerServiceWorker((state) => app.setCadEngineState(state));
