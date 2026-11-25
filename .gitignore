@@ -3,3 +3,5 @@ dist/
 .video-analysis/
 .DS_Store
 *.log
+dist-lib/
+*.tgz

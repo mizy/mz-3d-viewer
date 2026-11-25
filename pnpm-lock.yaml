@@ -7,20 +7,19 @@ settings:
 importers:
 
   .:
-    dependencies:
-      occt-import-js:
-        specifier: ^0.0.23
-        version: 0.0.23
-      three:
-        specifier: ^0.186.1
-        version: 0.186.1
     devDependencies:
       '@types/three':
         specifier: ^0.186.0
         version: 0.186.0
+      occt-import-js:
+        specifier: ^0.0.23
+        version: 0.0.23
       playwright:
         specifier: ^1.63.0
         version: 1.63.0
+      three:
+        specifier: ^0.186.1
+        version: 0.186.1
       typescript:
         specifier: ^7.0.2
         version: 7.0.2

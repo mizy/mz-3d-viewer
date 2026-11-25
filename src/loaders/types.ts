@@ -14,7 +14,7 @@ export type ParsedModel = {
 };
 
 export type LoadProgress = {
-  /** 0..1, or null when the step has no measurable progress. */
+  /** 0..1, or null when the step is alive but unmeasurable (the UI shows an indeterminate bar). */
   ratio: number | null;
   label: string;
 };

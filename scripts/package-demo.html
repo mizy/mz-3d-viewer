@@ -1,0 +1,73 @@
+<!doctype html>
+<!-- Loads the built package the way a consumer would: bare `three` specifiers resolved by an
+     import map, assets served from the package directory. Used by verify-package.mjs. -->
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <title>mz-3d-viewer · package smoke test</title>
+  <style>
+    html, body { margin: 0; height: 100%; background: #0b1016; }
+    #view { display: block; width: 100vw; height: 100vh; }
+  </style>
+  <script type="importmap">
+  {
+    "imports": {
+      "three": "/node_modules/three/build/three.webgpu.js",
+      "three/webgpu": "/node_modules/three/build/three.webgpu.js",
+      "three/tsl": "/node_modules/three/build/three.tsl.js",
+      "three/addons/": "/node_modules/three/examples/jsm/"
+    }
+  }
+  </script>
+</head>
+<body>
+<canvas id="view"></canvas>
+<script type="module">
+  import { CAD_QUALITY_PRESETS, createModelViewer, detectFormat, parseModel } from "/dist-lib/index.js";
+
+  const viewer = await createModelViewer(document.getElementById("view"), {
+    background: 0x0b1016,
+    quality: "fine",
+    forceWebGL: new URLSearchParams(location.search).get("webgl") === "1"
+  });
+
+  async function toFile(url) {
+    const response = await fetch(url);
+    if (!response.ok) throw new Error(`${url}: HTTP ${response.status}`);
+    const blob = await response.blob();
+    return new File([blob], url.split("/").pop(), { type: blob.type });
+  }
+
+  window.__pkg = {
+    viewer,
+    presets: Object.keys(CAD_QUALITY_PRESETS),
+    detect: detectFormat("part.stp"),
+    load: async (urls, quality) => {
+      const parsed = await viewer.load(await Promise.all(urls.map(toFile)), { quality });
+      return parsed.map((model) => {
+        let triangles = 0;
+        model.root.traverse((node) => {
+          if (node.isMesh) triangles += (node.geometry.index?.count ?? node.geometry.attributes.position.count) / 3;
+        });
+        return {
+          format: model.format,
+          mmPerUnit: model.sourceUnit.mmPerUnit,
+          warnings: model.warnings,
+          meshes: model.root.children.length,
+          triangles
+        };
+      });
+    },
+    parseOnly: async (url) => {
+      const model = await parseModel(await toFile(url));
+      let meshes = 0;
+      model.root.traverse((node) => { if (node.isMesh === true) meshes += 1; });
+      return { format: model.format, meshes, mmPerUnit: model.sourceUnit.mmPerUnit, warnings: model.warnings.length };
+    },
+    style: () => viewer.stage.style,
+    edges: () => viewer.stage.active?.edges !== null && viewer.stage.active?.edges !== undefined
+  };
+  window.__ready = true;
+</script>
+</body>
+</html>

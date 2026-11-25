@@ -15,9 +15,6 @@ export function createEntities(stage: Stage): () => void {
     if (panel.hidden) return;
     panel.hidden = true;
     toggle.setAttribute("aria-expanded", "false");
-    const aspect = stage.viewportAspect;
-    stage.resize();
-    if (aspect !== stage.viewportAspect) stage.fitToActive(true);
   };
 
   const render = (): void => {
@@ -78,13 +75,11 @@ export function createEntities(stage: Stage): () => void {
     toggle.setAttribute("aria-expanded", String(!panel.hidden));
     document.getElementById("explodePanel")!.hidePopover();
     render();
-    const aspect = stage.viewportAspect;
-    stage.resize();
-    if (aspect !== stage.viewportAspect) stage.fitToActive(true);
   });
   document.getElementById("entitiesClose")!.addEventListener("click", close);
-  document.getElementById("sidebarToggle")!.addEventListener("click", close);
-  document.getElementById("explodeBtn")!.addEventListener("click", close);
+  for (const id of ["sidebarToggle", "explodeBtn", "materialBtn", "measureBtn"]) {
+    document.getElementById(id)!.addEventListener("click", close);
+  }
   search.addEventListener("input", render);
   clear.addEventListener("click", () => { stage.selectPart(null); render(); });
   isolate.addEventListener("click", () => {
@@ -93,7 +88,10 @@ export function createEntities(stage: Stage): () => void {
   });
   document.getElementById("showPartsBtn")!.addEventListener("click", () => { stage.showAllParts(); render(); });
   panel.addEventListener("keydown", (event) => {
-    if (event.key === "Escape") { close(); toggle.focus(); }
+    if (event.key === "Escape") {
+      close();
+      document.getElementById("toolsToggle")!.focus();
+    }
   });
   return render;
 }

@@ -1,9 +1,12 @@
 import type { Stage, DisplayStyle, MeasurementUnit, SectionAxis, ControllerKind, Projection } from "../viewer/stage";
 import { CONTROLLER_LABEL, isControllerKind } from "../viewer/controller";
 import { createEntities } from "./entities";
+import { createInspection } from "./inspection";
+import { createContextMenu } from "./contextMenu";
 import { createNavCube } from "./navCube";
 import { createDemo } from "../viewer/demo";
 import { convertLength } from "../viewer/stage";
+import type { MaterialPreset } from "../viewer/appearance";
 import { ACCEPTED_EXTENSIONS, parseOne, primaryFiles } from "../loaders/openFiles";
 import { CAD_QUALITY_PRESETS, type CadQuality } from "../loaders/step";
 import { describeError } from "../loaders/gltf";
@@ -55,6 +58,12 @@ export function createApp(stage: Stage, backend: Backend, forceWebGL: boolean): 
   const explodePanel = el<HTMLElement>("explodePanel");
   const explodeBtn = el<HTMLButtonElement>("explodeBtn");
   const styleBtn = el<HTMLButtonElement>("styleBtn");
+  const displayBtn = el<HTMLButtonElement>("displayBtn");
+  const displayMenu = el<HTMLElement>("displayMenu");
+  const materialBtn = el<HTMLButtonElement>("materialBtn");
+  const materialPanel = el<HTMLElement>("materialPanel");
+  const materialTarget = el<HTMLParagraphElement>("materialTarget");
+  const materialOptions = materialPanel.querySelectorAll<HTMLButtonElement>("[data-material]");
   const fileInput = el<HTMLInputElement>("fileInput");
   const dropHint = el<HTMLDivElement>("dropHint");
   const dragOverlay = el<HTMLDivElement>("dragOverlay");
@@ -71,11 +80,21 @@ export function createApp(stage: Stage, backend: Backend, forceWebGL: boolean): 
   const gridToggle = el<HTMLInputElement>("gridToggle");
   const environmentToggle = el<HTMLInputElement>("environmentToggle");
   const sectionToggle = el<HTMLInputElement>("sectionToggle");
-  const sectionAxisSelect = el<HTMLSelectElement>("sectionAxisSelect");
-  const sectionOffset = el<HTMLInputElement>("sectionOffset");
+  const sectionControls = (["x", "y", "z"] satisfies SectionAxis[]).map((axis) => {
+    const suffix = axis.toUpperCase();
+    return {
+      axis,
+      enabled: el<HTMLInputElement>(`section${suffix}`),
+      offset: el<HTMLInputElement>(axis === "x" ? "sectionOffset" : `sectionOffset${suffix}`),
+      flip: el<HTMLButtonElement>(`sectionFlip${suffix}`)
+    };
+  });
+  const fitAllBtn = el<HTMLButtonElement>("fitAllBtn");
   const unitSelect = el<HTMLSelectElement>("unitSelect");
   const sourceUnitSelect = el<HTMLSelectElement>("sourceUnitSelect");
   const edgeAngleSelect = el<HTMLSelectElement>("edgeAngleSelect");
+  const edgeWidthRange = el<HTMLInputElement>("edgeWidthRange");
+  const edgeWidthValue = el<HTMLOutputElement>("edgeWidthValue");
   const cadQualitySelect = el<HTMLSelectElement>("cadQualitySelect");
   const controllerSelect = el<HTMLSelectElement>("controllerSelect");
   const projectionPerspective = el<HTMLInputElement>("projectionPerspective");
@@ -88,8 +107,40 @@ export function createApp(stage: Stage, backend: Backend, forceWebGL: boolean): 
   fileInput.accept = ACCEPTED_EXTENSIONS.join(",");
 
   let unit: MeasurementUnit = "mm";
+  const renderInspection = createInspection(stage, canvas, () => unit, () => {
+    renderModelList();
+    renderStats();
+  });
+
+  createContextMenu(stage, canvas, {
+    fitAll: () => stage.fitToScene(),
+    fitPart: (index) => stage.fitToPart(index),
+    hidePart: (index) => {
+      stage.setPartVisible(index, false);
+      renderModelList();
+    },
+    isolatePart: (index) => {
+      stage.isolatePart(index);
+      renderModelList();
+    },
+    hideModel: (modelId) => {
+      stage.setVisible(modelId, false);
+      renderModelList();
+    },
+    showAll: () => {
+      for (const handle of stage.modelList) stage.setVisible(handle.id, true);
+      stage.showAllParts();
+      renderModelList();
+    },
+    resetView: () => {
+      stage.setStandardView("iso", false);
+      stage.fitToScene();
+    },
+    setStyle: (style) => { void applyStyle(style); }
+  });
   let cadQuality: CadQuality = "standard";
   let busy = false;
+  let styleRequest = 0;
   let cancelController: AbortController | null = null;
   let toastTimer: number | null = null;
   let cadEngineState: CadEngineWarmState = { status: "idle", cachedBytes: 0, totalBytes: 0, detail: "" };
@@ -117,14 +168,20 @@ export function createApp(stage: Stage, backend: Backend, forceWebGL: boolean): 
     }, durationMs);
   }
 
-  function showProgress(label: string, ratio: number | null): void {
+  function showProgress(label: string, ratio: number | null, cancellable = true): void {
     progressWrap.hidden = false;
     progressLabel.textContent = label;
-    progressBar.style.width = ratio === null ? "35%" : `${Math.round(ratio * 100)}%`;
+    cancelBtn.hidden = !cancellable;
+    // A null ratio means the work is alive but refuses to be measured (OCCT tessellation runs
+    // as one blocking wasm call). Sweep the bar instead of parking a fake percentage on it.
+    const indeterminate = ratio === null;
+    progressBar.classList.toggle("is-indeterminate", indeterminate);
+    progressBar.style.width = indeterminate ? "" : `${Math.round(ratio * 100)}%`;
   }
 
   function hideProgress(): void {
     progressWrap.hidden = true;
+    progressBar.classList.remove("is-indeterminate");
     progressBar.style.width = "0%";
   }
 
@@ -145,7 +202,8 @@ export function createApp(stage: Stage, backend: Backend, forceWebGL: boolean): 
     renderEntities();
     dropHint.hidden = stage.modelList.length > 0;
     const active = stage.active;
-    el<HTMLElement>("activeName").textContent = active?.name ?? "无限视角，尽在本地。";
+    el<HTMLElement>("activeName").textContent = active?.name ?? "";
+    el<HTMLElement>("modelCaption").hidden = active === null;
     el<HTMLElement>("navigation").hidden = active === null;
     explodeBtn.disabled = active === null;
     const canExplode = active !== null && active.parts.length > 1;
@@ -160,6 +218,10 @@ export function createApp(stage: Stage, backend: Backend, forceWebGL: boolean): 
     el<HTMLElement>("partCount").textContent = `${active?.parts.length ?? 0} 部件`;
     explodeBtn.classList.toggle("active", (active?.explodeTarget ?? 0) > 0);
     styleBtn.disabled = active === null;
+    displayBtn.disabled = active === null;
+    renderMaterialControls();
+    renderInspection();
+    fitAllBtn.disabled = !stage.modelList.some(({ root }) => root.visible);
     el<HTMLButtonElement>("fitBtn").disabled = active === null;
     if (stage.modelList.length === 0) {
       const empty = document.createElement("li");
@@ -239,6 +301,7 @@ export function createApp(stage: Stage, backend: Backend, forceWebGL: boolean): 
 
   function renderStats(): void {
     statsBox.replaceChildren();
+    renderInspection();
     const handle = stage.active;
     if (handle === null) {
       sourceUnitSelect.disabled = true;
@@ -296,9 +359,9 @@ export function createApp(stage: Stage, backend: Backend, forceWebGL: boolean): 
     const signal = controller.signal;
     cancelController = controller;
     setStatus("解析中…");
+    let opened = 0;
 
     try {
-      let opened = 0;
       const notes: string[] = [];
       for (const file of primaries) {
         if (signal.aborted) {
@@ -331,8 +394,6 @@ export function createApp(stage: Stage, backend: Backend, forceWebGL: boolean): 
         const summary = opened === 1 ? `已打开 ${primaries[0].name}` : `已打开 ${opened} 个模型`;
         toast(notes.length === 0 ? summary : `${summary} · ${notes.join(" · ")}`, notes.length === 0 ? "info" : "warn", notes.length === 0 ? 4000 : 9000);
       }
-      // Edge lines are stale as soon as the model set changes.
-      await stage.setDisplayStyle(stage.style, reportEdgeProgress);
     } catch (error) {
       const message = describeError(error);
       if (signal.aborted) {
@@ -348,39 +409,77 @@ export function createApp(stage: Stage, backend: Backend, forceWebGL: boolean): 
       renderModelList();
       renderStats();
     }
+    // Edge generation is a separate display task. The model remains usable during it.
+    if (opened > 0 && stage.style === "edges") await applyStyle("edges");
   }
 
   function reportEdgeProgress(done: number, total: number): void {
-    showProgress(`生成边线 ${done}/${total}`, total === 0 ? null : done / total);
+    showProgress(`生成边线 ${done}/${total}`, total === 0 ? null : done / total, false);
   }
 
   // ------------------------------------------------------------------ display settings
 
-  async function applyStyle(style: DisplayStyle): Promise<void> {
+  const STYLE_LABEL: Record<DisplayStyle, string> = {
+    solid: "实体", edges: "边线", wireframe: "线框", xray: "透射"
+  };
+
+  function syncStyleControls(style: DisplayStyle): void {
     styleSolid.checked = style === "solid";
     styleEdges.checked = style === "edges";
     styleWireframe.checked = style === "wireframe";
     styleXray.checked = style === "xray";
-    el<HTMLElement>("styleLabel").textContent = { solid: "实体", edges: "边线", wireframe: "线框", xray: "透射" }[style];
+    styleBtn.setAttribute("aria-pressed", String(style === "edges"));
+    styleBtn.title = style === "edges" ? "关闭边线" : "显示边线";
+    displayBtn.title = `显示模式：${STYLE_LABEL[style]}`;
+    displayBtn.setAttribute("aria-label", `显示模式：${STYLE_LABEL[style]}`);
+  }
+
+  async function applyStyle(style: DisplayStyle): Promise<void> {
+    const request = ++styleRequest;
+    const canShowProgress = (): boolean => request === styleRequest && !busy;
+    syncStyleControls(style);
     try {
-      if (style === "edges") {
-        showProgress("生成边线…", null);
+      if (canShowProgress() && style === "edges") {
+        showProgress("生成边线…", null, false);
       }
-      await stage.setDisplayStyle(style, reportEdgeProgress);
+      await stage.setDisplayStyle(style, (done, total) => {
+        if (canShowProgress()) reportEdgeProgress(done, total);
+      });
     } catch (error) {
-      toast(`切换显示模式失败：${describeError(error)}`, "error");
+      if (request === styleRequest) toast(`切换显示模式失败：${describeError(error)}`, "error");
     } finally {
-      hideProgress();
+      if (canShowProgress()) hideProgress();
     }
   }
 
   styleBtn.addEventListener("click", () => {
-    void applyStyle(stage.style === "solid" ? "edges" : stage.style === "edges" ? "wireframe" : stage.style === "wireframe" ? "xray" : "solid");
+    void applyStyle(stage.style === "edges" ? "solid" : "edges");
   });
-  styleSolid.addEventListener("change", () => void applyStyle("solid"));
-  styleEdges.addEventListener("change", () => void applyStyle("edges"));
-  styleWireframe.addEventListener("change", () => void applyStyle("wireframe"));
-  styleXray.addEventListener("change", () => void applyStyle("xray"));
+  for (const [input, style] of [
+    [styleSolid, "solid"], [styleEdges, "edges"], [styleWireframe, "wireframe"], [styleXray, "xray"]
+  ] as const) {
+    input.addEventListener("change", () => {
+      if (displayMenu.matches(":popover-open")) displayMenu.hidePopover();
+      void applyStyle(style);
+    });
+  }
+
+  function renderMaterialControls(): void {
+    const active = stage.active;
+    materialBtn.disabled = active === null || active.appearance.surfaces.length === 0;
+    if (materialBtn.disabled) materialPanel.hidePopover();
+    materialTarget.textContent = active?.name ?? "";
+    for (const option of materialOptions) {
+      option.setAttribute("aria-pressed", String(option.dataset["material"] === active?.appearance.preset));
+    }
+  }
+
+  for (const option of materialOptions) {
+    option.addEventListener("click", () => {
+      stage.setActiveMaterial(option.dataset["material"] as MaterialPreset);
+      renderMaterialControls();
+    });
+  }
 
   gridToggle.addEventListener("change", () => {
     stage.setGridVisible(gridToggle.checked);
@@ -392,16 +491,26 @@ export function createApp(stage: Stage, backend: Backend, forceWebGL: boolean): 
     stage.setEnvironment(environmentToggle.checked);
   });
   stage.setEnvironment(environmentToggle.checked);
+  const lightBackground = el<HTMLInputElement>("lightBackground");
+  lightBackground.addEventListener("change", () => stage.setLightBackground(lightBackground.checked));
 
   function applySection(): void {
-    const enabled = sectionToggle.checked;
-    sectionAxisSelect.disabled = !enabled;
-    sectionOffset.disabled = !enabled;
-    stage.setSection(enabled, sectionAxisSelect.value as SectionAxis, Number(sectionOffset.value) / 100);
+    const cuts = sectionControls.flatMap(({ axis, enabled, offset, flip }) => {
+      enabled.disabled = !sectionToggle.checked;
+      offset.disabled = flip.disabled = enabled.disabled || !enabled.checked;
+      return offset.disabled ? [] : [{ axis, ratio: offset.valueAsNumber / 100, reversed: flip.getAttribute("aria-pressed") === "true" }];
+    });
+    stage.setSections(cuts);
   }
   sectionToggle.addEventListener("change", applySection);
-  sectionAxisSelect.addEventListener("change", applySection);
-  sectionOffset.addEventListener("input", applySection);
+  for (const { enabled, offset, flip } of sectionControls) {
+    enabled.addEventListener("change", applySection);
+    offset.addEventListener("input", applySection);
+    flip.addEventListener("click", () => {
+      flip.setAttribute("aria-pressed", String(flip.getAttribute("aria-pressed") !== "true"));
+      applySection();
+    });
+  }
 
   unitSelect.addEventListener("change", () => {
     unit = unitSelect.value as MeasurementUnit;
@@ -414,7 +523,6 @@ export function createApp(stage: Stage, backend: Backend, forceWebGL: boolean): 
     if (active === null || !(chosen in UNIT_LABEL)) return;
     stage.setSourceUnit(active.id, chosen);
     renderStats();
-    if (stage.style === "edges") void applyStyle("edges");
   });
 
   edgeAngleSelect.addEventListener("change", () => {
@@ -422,6 +530,19 @@ export function createApp(stage: Stage, backend: Backend, forceWebGL: boolean): 
     if (stage.style === "edges") {
       void applyStyle("edges");
     }
+  });
+
+  /** Edge width is a viewing preference like the controller, so it survives reloads. */
+  function applyEdgeWidth(width: number, persist: boolean): void {
+    edgeWidthRange.value = String(width);
+    edgeWidthValue.textContent = `${width.toFixed(1)}px`;
+    stage.setEdgeWidth(width);
+    if (persist) storePreference(EDGE_WIDTH_STORAGE_KEY, String(width));
+  }
+
+  edgeWidthRange.addEventListener("input", () => {
+    const width = Number(edgeWidthRange.value);
+    if (Number.isFinite(width)) applyEdgeWidth(width, true);
   });
 
   cadQualitySelect.addEventListener("change", () => {
@@ -450,18 +571,15 @@ export function createApp(stage: Stage, backend: Backend, forceWebGL: boolean): 
     }
   });
 
-  function applyProjection(projection: Projection, announce: boolean): void {
+  function applyProjection(projection: Projection): void {
     stage.setProjection(projection);
     projectionPerspective.checked = projection === "perspective";
     projectionOrthographic.checked = projection === "orthographic";
     storePreference(PROJECTION_STORAGE_KEY, projection);
-    if (announce) {
-      toast(`投影方式：${projection === "orthographic" ? "正交（平行投影）" : "透视"}`, "info", 2500);
-    }
   }
 
-  projectionPerspective.addEventListener("change", () => applyProjection("perspective", true));
-  projectionOrthographic.addEventListener("change", () => applyProjection("orthographic", true));
+  projectionPerspective.addEventListener("change", () => applyProjection("perspective"));
+  projectionOrthographic.addEventListener("change", () => applyProjection("orthographic"));
 
   const rememberedController = readStoredController();
   if (rememberedController !== null) {
@@ -469,8 +587,9 @@ export function createApp(stage: Stage, backend: Backend, forceWebGL: boolean): 
   }
   const rememberedProjection = readStoredProjection();
   if (rememberedProjection !== null) {
-    applyProjection(rememberedProjection, false);
+    applyProjection(rememberedProjection);
   }
+  applyEdgeWidth(readStoredEdgeWidth(), false);
 
   // ------------------------------------------------------------------ buttons
 
@@ -510,7 +629,6 @@ export function createApp(stage: Stage, backend: Backend, forceWebGL: boolean): 
     renderModelList();
     renderStats();
     void applyStyle(stage.style);
-    toast("11 个独立部件 · 点击底部「爆炸」试试", "info", 5000);
   });
 
   cancelBtn.addEventListener("click", () => {
@@ -550,6 +668,11 @@ export function createApp(stage: Stage, backend: Backend, forceWebGL: boolean): 
   });
 
   fullscreenBtn.hidden = !document.fullscreenEnabled;
+  const toolsMenu = el<HTMLElement>("toolsMenu");
+  toolsMenu.addEventListener("click", (event) => {
+    if (event.target instanceof Element && event.target.closest("button")) toolsMenu.hidePopover();
+  }, { capture: true });
+
   function setSidebarOpen(open: boolean): void {
     if (open) {
       renderModelList();
@@ -560,7 +683,10 @@ export function createApp(stage: Stage, backend: Backend, forceWebGL: boolean): 
   }
   sidebarToggle.addEventListener("click", () => setSidebarOpen(true));
   el<HTMLButtonElement>("sidebarClose").addEventListener("click", () => setSidebarOpen(false));
-  sidebar.addEventListener("close", () => sidebarToggle.setAttribute("aria-expanded", "false"));
+  sidebar.addEventListener("close", () => {
+    sidebarToggle.setAttribute("aria-expanded", "false");
+    el<HTMLButtonElement>("toolsToggle").focus();
+  });
   sidebar.addEventListener("click", (event) => {
     const box = sidebar.getBoundingClientRect();
     if (event.target === sidebar && (event.clientX < box.left || event.clientX > box.right || event.clientY < box.top || event.clientY > box.bottom)) {
@@ -598,6 +724,10 @@ export function createApp(stage: Stage, backend: Backend, forceWebGL: boolean): 
   }
   el<HTMLButtonElement>("fitBtn").addEventListener("click", () => {
     stage.fitToActive();
+  });
+  fitAllBtn.addEventListener("click", () => {
+    setSidebarOpen(false);
+    stage.fitToScene();
   });
 
   // ------------------------------------------------------------------ drag & drop
@@ -661,7 +791,8 @@ export function createApp(stage: Stage, backend: Backend, forceWebGL: boolean): 
     }
     switch (event.key.toLowerCase()) {
       case "f":
-        stage.fitToActive();
+        if (event.shiftKey) stage.fitToScene();
+        else stage.fitToActive();
         return;
       case "g":
         gridToggle.checked = !gridToggle.checked;
@@ -669,9 +800,6 @@ export function createApp(stage: Stage, backend: Backend, forceWebGL: boolean): 
         return;
       case "w": {
         const next: DisplayStyle = stage.style === "solid" ? "edges" : stage.style === "edges" ? "wireframe" : stage.style === "wireframe" ? "xray" : "solid";
-        styleSolid.checked = next === "solid";
-        styleEdges.checked = next === "edges";
-        styleWireframe.checked = next === "wireframe";
         void applyStyle(next);
         return;
       }
@@ -688,7 +816,7 @@ export function createApp(stage: Stage, backend: Backend, forceWebGL: boolean): 
     capture: () => stage.captureNextFrame(),
     cadEngine: () => cadEngineState,
     setController: (kind) => applyController(kind, false),
-    setProjection: (projection) => applyProjection(projection, false),
+    setProjection: applyProjection,
     summary: () => ({
       models: stage.modelList.map((handle) => ({
         id: handle.id,
@@ -713,9 +841,9 @@ export function createApp(stage: Stage, backend: Backend, forceWebGL: boolean): 
   };
   window.__mzViewer = hooks;
 
+  syncStyleControls(stage.style);
   renderModelList();
   renderStats();
-  canvas.addEventListener("contextmenu", (event) => event.preventDefault());
 
   return {
     setCadEngineState,
@@ -731,6 +859,14 @@ function stripExtension(name: string): string {
 
 const CONTROLLER_STORAGE_KEY = "mz-3d-viewer.controller";
 const PROJECTION_STORAGE_KEY = "mz-3d-viewer.projection";
+const EDGE_WIDTH_STORAGE_KEY = "mz-3d-viewer.edge-width";
+/** Must match the range input's default in index.html and `Stage`'s own default. */
+const DEFAULT_EDGE_WIDTH = 2;
+
+function readStoredEdgeWidth(): number {
+  const width = Number(readPreference(EDGE_WIDTH_STORAGE_KEY));
+  return Number.isFinite(width) && width >= 1 && width <= 4 ? width : DEFAULT_EDGE_WIDTH;
+}
 
 function readStoredController(): ControllerKind | null {
   const value = readPreference(CONTROLLER_STORAGE_KEY);

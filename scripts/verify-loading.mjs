@@ -4,6 +4,7 @@ import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { chromium } from "playwright";
+import { openTool } from "./viewerUi.mjs";
 
 const url = process.argv.find((arg) => arg.startsWith("--url="))?.slice(6) ?? "http://localhost:8899/";
 const fixtures = await mkdtemp(path.join(tmpdir(), "mz-loading-"));
@@ -25,8 +26,10 @@ await page.addInitScript(() => {
   window.Worker = class extends OriginalWorker {
     constructor(url, options) {
       super(url, options);
-      const entry = { url: String(url), terminated: false };
+      const entry = { url: String(url), terminated: false, messages: 0 };
       window.workers.push(entry);
+      const postMessage = this.postMessage.bind(this);
+      this.postMessage = (...args) => { entry.messages++; postMessage(...args); };
       const terminate = this.terminate.bind(this);
       this.terminate = () => { entry.terminated = true; terminate(); };
     }
@@ -38,10 +41,17 @@ async function open(files) {
   await page.waitForFunction(() => document.getElementById("progressWrap").hidden && window.__mzViewer.stage.active !== null);
 }
 
+async function showOriginalMaterial() {
+  await openTool(page, "#materialBtn", "click");
+  await page.locator('[data-material="original"]').click();
+  await page.keyboard.press("Escape");
+}
+
 try {
   await page.goto(url);
   await page.waitForFunction(() => window.__mzViewer !== undefined);
   await open([sample("obj/cube.obj"), sample("obj/cube.mtl"), sample("obj/cube-texture.png")]);
+  await showOriginalMaterial();
   assert.equal(await page.evaluate(() => window.liveUrls.size), 0, "OBJ revokes its local texture URLs after loading");
 
   // Observe the actual disposal events, including resources shared within a model.
@@ -66,6 +76,9 @@ try {
   model.images = [{ uri: "cube-texture.png" }];
   model.textures = [{ source: 0 }];
   model.materials[0].pbrMetallicRoughness.baseColorTexture = { index: 0 };
+  const instanceNode = model.nodes.length;
+  model.nodes.push({ mesh: 0, translation: [2, 0, 0] });
+  model.scenes[model.scene].nodes.push(instanceNode);
   const binary = glb.subarray(28 + jsonLength);
   const primitive = model.meshes[0].primitives[0];
   const vertexCount = model.accessors[primitive.attributes.POSITION].count;
@@ -83,6 +96,15 @@ try {
   await writeFile(gltfPath, JSON.stringify(model));
   await writeFile(binPath, Buffer.concat([binary, uv]));
   await open([gltfPath, binPath, sample("obj/cube-texture.png")]);
+  await showOriginalMaterial();
+  await page.waitForFunction(() => window.__mzViewer.stage.active.edges?.visible);
+  assert(await page.evaluate(() => {
+    const stage = window.__mzViewer.stage;
+    const [first, second] = stage.active.edges.children;
+    const worker = window.workers.at(-1);
+    return first.geometry === second.geometry && !first.matrix.equals(second.matrix) &&
+      worker.url.includes("edges.worker") && worker.messages === 1;
+  }), "two glTF mesh instances build one edge buffer and keep distinct transforms");
   assert(await page.evaluate(() => window.__mzViewer.stage.active.appearance.surfaces.some(({ mesh }) => mesh.material.map?.image)), "glTF external PNG loaded");
   assert.equal(await page.evaluate(() => window.liveUrls.size), 0, "glTF releases its companion URLs");
   await page.evaluate(() => {
@@ -90,10 +112,15 @@ try {
     window.bitmapClosed = 0;
     const close = image.close.bind(image);
     image.close = () => { window.bitmapClosed++; close(); };
+    const edgeBuffer = window.__mzViewer.stage.active.edges.children[0].geometry;
+    window.edgeBufferDisposals = 0;
+    edgeBuffer.addEventListener("dispose", () => window.edgeBufferDisposals++);
   });
+  await page.locator("#styleBtn").click();
   await page.locator("#brandLink").click();
   assert.equal(await page.evaluate(() => window.bitmapClosed), 1, "glTF ImageBitmap released");
-  console.log("✓ glTF external BIN/PNG, URL cleanup and ImageBitmap disposal");
+  assert.equal(await page.evaluate(() => window.edgeBufferDisposals), 1, "shared edge buffer disposed once");
+  console.log("✓ glTF external BIN/PNG, one edge buffer for two instances, and resource disposal");
 
   // Keep the real CAD worker's engine download pending, then cancel without waiting for it.
   let releaseEngine;
@@ -165,11 +192,21 @@ try {
     await pending;
     return stage.modelList.length === 1 && stage.active.edges !== null;
   }), "removing a pending model still builds edges for the remaining model");
+  assert(await page.evaluate(async () => {
+    const { stage } = window.__mzViewer;
+    const model = stage.active;
+    const edges = model.edges;
+    const previousXScale = edges.children[0].matrix.elements[0];
+    stage.setSourceUnit(model.id, "cm");
+    await window.__mzViewer.capture();
+    return model.edges === edges &&
+      Math.abs(edges.children[0].matrix.elements[0] / previousXScale - 10) < 1e-6;
+  }), "a source unit change moves the existing edge buffers with the model");
   console.log(`✓ large single-mesh edge worker: ${responsive.ticks} UI ticks, shared task, cancellation and latest-angle result`);
 
   await page.locator("#brandLink").click();
   await page.locator("#demoBtn").click();
-  await page.locator("#entitiesBtn").click();
+  await openTool(page, "#entitiesBtn", "click");
   await page.evaluate(() => { window.firstEntity = document.querySelector(".entity-name"); });
   await page.locator("#entitySearch").fill("轴心");
   await page.locator(".entity-name:visible").click();
@@ -178,8 +215,15 @@ try {
   await page.locator("#entitiesClose").click();
   await page.waitForTimeout(700);
   const calls = await page.evaluate(() => window.__mzViewer.stage.renderer.info.render.calls);
-  await page.waitForTimeout(300);
+  await page.evaluate(() => {
+    const controls = window.__mzViewer.stage.controls;
+    const update = controls.update.bind(controls);
+    window.idleControllerUpdates = 0;
+    controls.update = () => { window.idleControllerUpdates++; update(); };
+  });
+  await page.waitForTimeout(500);
   assert.equal(await page.evaluate(() => window.__mzViewer.stage.renderer.info.render.calls), calls, "idle scene does not redraw");
+  assert.equal(await page.evaluate(() => window.idleControllerUpdates), 0, "idle viewer does not run camera updates");
   await page.keyboard.press("g");
   await page.waitForFunction((calls) => window.__mzViewer.stage.renderer.info.render.calls > calls, calls);
   await page.keyboard.press("g");
