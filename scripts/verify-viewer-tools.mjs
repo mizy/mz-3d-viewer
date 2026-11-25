@@ -4,6 +4,7 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { chromium } from "playwright";
+import { openTool } from "./viewerUi.mjs";
 const url = process.argv.find((arg) => arg.startsWith("--url="))?.slice(6) ?? "http://localhost:8899/";
 const stlBase64 = readFileSync(new URL("../samples/stl/cube-10x10.stl", import.meta.url)).toString("base64");
 const browser = await chromium.launch({ channel: "chrome", headless: true });
@@ -27,9 +28,12 @@ try {
 
     await page.locator("#demoBtn").tap();
     await page.waitForFunction(() => window.__mzViewer.stage.active?.parts.length === 11);
+    await openTool(page, "#materialBtn", "tap");
+    await page.locator('[data-material="original"]').tap();
+    await page.keyboard.press("Escape");
     const assembled = await page.evaluate(() => window.__mzViewer.stage.active.parts.map((part) => part.mesh.matrix.toArray()));
     const dimensions = await page.evaluate(() => window.__mzViewer.stage.active.stats.size.toArray());
-    await page.locator("#explodeBtn").tap();
+    await openTool(page, "#explodeBtn", "tap");
     assert.equal(await page.locator("#explodeRange").inputValue(), "50", "first explosion defaults to midpoint");
     await page.waitForTimeout(120);
     assert(await page.evaluate(() => window.__mzViewer.stage.active.explode > 0 && window.__mzViewer.stage.active.explode < 0.5), "explosion has intermediate frames");
@@ -40,7 +44,7 @@ try {
       await page.locator("#explodeRange").fill("20");
       await page.waitForFunction(() => window.__mzViewer.stage.active.explode === 0.2);
       await page.keyboard.press("Escape");
-      await page.locator("#explodeBtn").tap();
+      await openTool(page, "#explodeBtn", "tap");
       assert.equal(await page.locator("#explodeRange").inputValue(), "20", "rapid slider retarget and reopening preserve the latest value");
       await page.emulateMedia({ reducedMotion: "reduce" });
       await page.locator("#assembleBtn").tap();
@@ -55,9 +59,8 @@ try {
     await page.waitForFunction(() => window.__mzViewer.stage.active.explode === 0);
     assert.deepEqual(await page.evaluate(() => window.__mzViewer.stage.active.parts.map((part) => part.mesh.matrix.toArray())), assembled, "exact assembly restoration");
     await page.keyboard.press("Escape");
-    await page.locator("#styleBtn").tap();
-    await page.waitForFunction(() => window.__mzViewer.stage.active.edges !== null);
-    await page.locator("#explodeBtn").tap();
+    await page.waitForFunction(() => window.__mzViewer.stage.active.edges?.visible === true);
+    await openTool(page, "#explodeBtn", "tap");
     assert.equal(await page.locator("#explodeRange").inputValue(), "0", "reopening preserves restored position");
     await page.locator("#separateBtn").tap();
     await page.waitForFunction(() => window.__mzViewer.stage.active.explode === 1);
@@ -68,7 +71,14 @@ try {
       return model.edges.children.every((line, index) => line.matrixWorld.equals(model.parts[index].mesh.matrixWorld));
     }), "edge lines follow exploded meshes");
 
-    await page.locator("#entitiesBtn").tap();
+    const canvasBounds = await page.locator("#view").boundingBox();
+    const pose = await page.evaluate(() => window.__mzViewer.stage.camera.matrixWorld.toArray());
+    await openTool(page, "#entitiesBtn", "tap");
+    assert.deepEqual(canvasBounds, { x: 0, y: 0, width, height }, "canvas fills the viewport");
+    assert.deepEqual(await page.locator("#view").boundingBox(), canvasBounds, "parts overlay leaves the viewport full-size");
+    assert.deepEqual(await page.evaluate(() => window.__mzViewer.stage.camera.matrixWorld.toArray()), pose,
+      "opening an overlay does not reframe the model");
+    assert(await page.locator("#toolsMenu").isHidden(), "selecting a tool dismisses the menu");
     assert.equal(await page.locator(".entity-name").count(), 11, "named parts listed");
     await page.locator("#entitySearch").fill("紧固件 3");
     assert.equal(await page.locator(".entity-name:visible").count(), 1, "filter parts by source name");
@@ -93,13 +103,13 @@ try {
       return model.parts.every((part) => part.mesh.visible) && model.appearance.surfaces.every((surface) => surface.mesh.material === surface.material);
     }), "restore visibility and original materials");
     await page.locator("#entitiesClose").tap();
-    await page.locator("#styleBtn").tap();
-    await page.locator("#styleBtn").tap();
+    await page.keyboard.press("w");
+    await page.keyboard.press("w");
     assert(await page.evaluate(() => {
       const model = window.__mzViewer.stage.active;
       return window.__mzViewer.stage.style === "xray" && model.appearance.surfaces.every(({ mesh }) => mesh.material.transparent && !mesh.material.depthWrite && mesh.material.opacity <= 0.3);
     }), "X-ray shows translucent surfaces");
-    await page.locator("#entitiesBtn").tap();
+    await openTool(page, "#entitiesBtn", "tap");
     await page.locator(".entity-name:visible").tap();
     await page.locator("#clearPartBtn").tap();
     // X-ray materials are per imported material (colors are preserved), so the restored material
@@ -110,7 +120,7 @@ try {
         .every((original, index) => (Array.isArray(mesh.material) ? mesh.material : [mesh.material])[index] === appearance.xray.get(original)));
     }), "clearing X-ray selection restores X-ray");
     await page.locator("#entitiesClose").tap();
-    await page.locator("#styleBtn").tap();
+    await page.keyboard.press("w");
     assert(await page.evaluate(() => window.__mzViewer.stage.active.appearance.surfaces.every((surface) => surface.mesh.material === surface.material)), "leaving X-ray restores imported materials");
     await page.locator("#isoBtn").tap();
     await page.waitForTimeout(450);
@@ -299,12 +309,9 @@ try {
       await page.locator("#fitBtn").tap();
       await page.waitForTimeout(500);
       const perspectiveCoverage = await coverage();
-      await page.locator("#sidebarToggle").tap();
-      await openCameraPanel();
-      await page.locator("label.chip:has(#projectionOrthographic)").tap();
-      await page.locator("#sidebarClose").tap();
+      await page.locator(".projection-switch label:has(#projectionOrthographic)").tap();
       await page.waitForTimeout(500);
-      assert.equal(await page.evaluate(() => window.__mzViewer.summary().projection), "orthographic", "sidebar pick switches the projection");
+      assert.equal(await page.evaluate(() => window.__mzViewer.summary().projection), "orthographic", "canvas control switches the projection");
       assert.equal(await page.evaluate(() => window.__mzViewer.stage.camera.isOrthographicCamera === true), true, "the rendering camera is orthographic");
       const orthographicCoverage = await coverage();
       assert(Math.abs(orthographicCoverage.height - perspectiveCoverage.height) / perspectiveCoverage.height < 0.2,
@@ -330,23 +337,30 @@ try {
       }));
       assert(orthoAfter.zoom > orthoBefore.zoom, "orthographic wheel zoom changes the zoom");
       assert(Math.abs(orthoAfter.distance - orthoBefore.distance) < 1e-6, "orthographic zoom leaves the camera distance alone");
+      await page.setViewportSize({ width: 1100, height: 800 });
+      await page.locator(".projection-switch label:has(#projectionPerspective)").tap();
+      assert(await page.evaluate(() => {
+        const { stage } = window.__mzViewer;
+        return stage.camera.isPerspectiveCamera && Math.abs(stage.camera.aspect - stage.viewportAspect) < 1e-6;
+      }), "switching back to the perspective camera uses the resized viewport");
+      await page.setViewportSize({ width, height });
       console.log("  ✓ orthographic: framing kept, cube faces land, wheel zooms the frustum");
-      await page.evaluate(() => window.__mzViewer.setProjection("perspective"));
     }
 
-    await page.locator("#sidebarToggle").tap();
+    await openTool(page, "#sidebarToggle", "tap");
     await page.locator("#sectionDetails summary").tap();
     await page.locator("#sectionToggle").check();
-    await page.locator("#sectionAxisSelect").selectOption("y");
+    await page.locator("#sectionX").uncheck();
+    await page.locator("#sectionY").check();
     assert(await page.evaluate(() => window.__mzViewer.stage.scene.children.some((child) => child.isClippingGroup && child.clippingPlanes.length === 1)), "exploded section plane");
     await page.locator("#sectionToggle").uncheck();
     await page.keyboard.press("Escape");
     assert.equal(await page.locator("#settingsPanel").isVisible(), false, "Escape closes modal");
-    assert(await page.evaluate(() => [...document.querySelectorAll(".dock-btn, #openBtn, .brand")].every((element) => {
+    assert(await page.evaluate(() => [...document.querySelectorAll(".tool-dock > .dock-btn, #openBtn, .brand")].every((element) => {
       const rect = element.getBoundingClientRect();
       return rect.left >= 0 && rect.right <= innerWidth && rect.height >= 44 && rect.bottom <= innerHeight;
     })), "touch controls fit the viewport");
-    await page.locator("#sidebarToggle").tap();
+    await openTool(page, "#sidebarToggle", "tap");
     await page.locator('#modelList button[title="移除"]').tap();
     await page.locator("#sidebarClose").tap();
     assert(await page.locator("#demoBtn").isVisible(), "empty state after removal");
@@ -365,7 +379,7 @@ try {
         });
       }, { selector, types, b64: stlBase64 });
 
-      await page.locator("#sidebarToggle").tap();
+      await openTool(page, "#sidebarToggle", "tap");
       await dragDispatch("window", ["dragenter"]);
       await page.waitForTimeout(80);
       assert.equal(await page.locator("#settingsPanel").isVisible(), false, "dragging files in closes the workspace panel");
@@ -385,29 +399,28 @@ try {
       console.log("  ✓ dropping a file anywhere in the window loads it");
 
       // The pickers are the real UI path, and both choices are meant to outlive a reload.
-      await page.locator("#sidebarToggle").tap();
+      await openTool(page, "#sidebarToggle", "tap");
       await openCameraPanel();
       await page.locator("#controllerSelect").selectOption("arcball");
-      await page.locator("label.chip:has(#projectionOrthographic)").tap();
       assert.equal(await page.evaluate(() => window.__mzViewer.summary().controller), "arcball", "sidebar pick switches the controller");
       await page.keyboard.press("Escape");
+      await page.locator(".projection-switch label:has(#projectionOrthographic)").tap();
       await page.reload();
       await page.waitForFunction(() => window.__mzViewer !== undefined);
       assert.equal(await page.evaluate(() => window.__mzViewer.summary().controller), "arcball", "controller choice survives a reload");
       assert.equal(await page.evaluate(() => window.__mzViewer.summary().projection), "orthographic", "projection choice survives a reload");
-      await page.locator("#sidebarToggle").tap();
+      await openTool(page, "#sidebarToggle", "tap");
       await openCameraPanel();
       assert.equal(await page.locator("#controllerSelect").inputValue(), "arcball", "select reflects the remembered controller");
       assert.equal(await page.locator("#projectionOrthographic").isChecked(), true, "chips reflect the remembered projection");
       await page.locator("#controllerSelect").selectOption("orbit");
-      await page.locator("label.chip:has(#projectionPerspective)").tap();
       await page.keyboard.press("Escape");
       console.log("  ✓ controller and projection picks are remembered across a reload");
 
       // The brand is the in-app way home: no reload, and the model does not need re-opening.
       await page.locator("#demoBtn").tap();
       await page.waitForFunction(() => window.__mzViewer.stage.active?.parts.length === 11);
-      await page.locator("#entitiesBtn").tap();
+      await openTool(page, "#entitiesBtn", "tap");
       assert.equal(await page.locator("#entitiesPanel").isVisible(), true, "part panel is open before going home");
       await page.locator(".brand").tap();
       assert.equal(await page.evaluate(() => window.__mzViewer.stage.modelList.length), 0, "brand clears the scene");
@@ -448,7 +461,7 @@ try {
       await page.waitForFunction(() => window.__mzViewer);
       await page.locator("#fileInput").setInputFiles(new URL("../samples/stl/cube-10x10.stl", import.meta.url).pathname);
       await page.waitForFunction(() => window.__mzViewer.stage.active !== null && document.getElementById("progressWrap").hidden);
-      await page.locator("#explodeBtn").tap();
+      await openTool(page, "#explodeBtn", "tap");
       assert(await page.locator("#explodeHint").isVisible(), "single mesh explanation is accessible on touch");
       assert(await page.locator("#explodeRange").isDisabled(), "single mesh cannot explode");
 

@@ -1,7 +1,6 @@
 import { Matrix4, Quaternion, Vector3 } from "three/webgpu";
 import type { Stage, StandardView } from "../viewer/stage";
-
-const CUBE_HALF = 28;
+import { createCubeRegions, CUBE_CORNER, CUBE_HALF } from "./navigation/cubeRegions";
 /** Shorter projected arms read as "this axis points at you", so they become a dot instead. */
 const AXIS_MIN_ARM = 6;
 const LABEL_PULLBACK = 10;
@@ -13,9 +12,9 @@ type BoxGeometry = { size: number; originX: number; originY: number; cubeX: numb
 
 /** Corners are indexed by sign bits (0 = x, 1 = y, 2 = z), so the neighbour along axis a is `index ^ (1 << a)`. */
 const CORNERS: [number, number, number][] = [0, 1, 2, 3, 4, 5, 6, 7].map((index) => [
-  ((index >> 0) & 1) === 1 ? CUBE_HALF : -CUBE_HALF,
-  ((index >> 1) & 1) === 1 ? CUBE_HALF : -CUBE_HALF,
-  ((index >> 2) & 1) === 1 ? CUBE_HALF : -CUBE_HALF
+  ((index >> 0) & 1) === 1 ? CUBE_CORNER : -CUBE_CORNER,
+  ((index >> 1) & 1) === 1 ? CUBE_CORNER : -CUBE_CORNER,
+  ((index >> 2) & 1) === 1 ? CUBE_CORNER : -CUBE_CORNER
 ]);
 
 function readGeometry(box: HTMLElement, cube: HTMLElement): BoxGeometry {
@@ -30,11 +29,8 @@ function readGeometry(box: HTMLElement, cube: HTMLElement): BoxGeometry {
 }
 
 /**
- * The axis triad lives on the cube itself: the three edges meeting at the corner nearest the eye
- * become X/Y/Z, taking over the white edges from that corner, and the corner swaps as the camera
- * turns. Positions are projected with the very perspective the cube is rendered with
- * (`perspective`/`perspective-origin` on the navcube box), so the coloured edges land exactly on
- * the rendered ones — a plain 2D projection would drift by a couple of pixels.
+ * Project the shallow axis guides between the bevel corners nearest the camera.
+ * The overlay shares the CSS cube's perspective and never intercepts its hit targets.
  */
 function createAxisOverlay(svg: SVGSVGElement, box: HTMLElement, cube: HTMLElement): (cubeRotation: Matrix4) => void {
   const parts: OverlayPart[] = (["x", "y", "z"] as const).map((axis) => ({
@@ -92,6 +88,7 @@ function createAxisOverlay(svg: SVGSVGElement, box: HTMLElement, cube: HTMLEleme
 /** @entry CSS cube and the axes it carries share the camera orientation, without a second GPU canvas. */
 export function createNavCube(stage: Stage, element: HTMLElement): void {
   const cube = element.querySelector<HTMLElement>(".cube")!;
+  const directions = createCubeRegions(cube);
   const flipY = new Matrix4().makeScale(1, -1, 1);
   const rotation = new Matrix4();
   const quaternion = new Quaternion();
@@ -126,8 +123,9 @@ export function createNavCube(stage: Stage, element: HTMLElement): void {
   element.addEventListener("pointercancel", () => { pointer = null; });
   element.addEventListener("click", (event) => {
     if (suppressClick) { suppressClick = false; return; }
-    const face = (event.target as HTMLElement).closest<HTMLButtonElement>("[data-view]");
-    if (face) stage.setStandardView(face.dataset["view"] as StandardView);
+    const region = (event.target as HTMLElement).closest<HTMLButtonElement>(".cube-region");
+    const direction = region === null ? undefined : directions.get(region);
+    if (direction !== undefined) stage.setViewDirection(direction);
     element.focus({ preventScroll: true });
   });
   element.addEventListener("keydown", (event) => {

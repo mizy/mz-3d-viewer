@@ -13,6 +13,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { chromium } from "playwright";
+import { openTool } from "./viewerUi.mjs";
 
 const root = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 const samples = path.join(root, "samples");
@@ -116,11 +117,13 @@ async function signature() {
 
     const sums = new Float64Array(gridWidth * gridHeight);
     const counts = new Float64Array(gridWidth * gridHeight);
+    let blueBias = 0;
     for (let y = 0; y < canvas.height; y++) {
       const cellY = Math.min(gridHeight - 1, Math.floor((y * gridHeight) / canvas.height));
       for (let x = 0; x < canvas.width; x++) {
         const index = (y * canvas.width + x) * 4;
         const luminance = 0.2126 * data[index] + 0.7152 * data[index + 1] + 0.0722 * data[index + 2];
+        blueBias += data[index + 2] - data[index];
         const cell = cellY * gridWidth + Math.min(gridWidth - 1, Math.floor((x * gridWidth) / canvas.width));
         sums[cell] += luminance;
         counts[cell] += 1;
@@ -130,7 +133,7 @@ async function signature() {
     for (let i = 0; i < cells.length; i++) {
       cells[i] = counts[i] === 0 ? 0 : Math.round(sums[i] / counts[i]);
     }
-    return { cells, width: canvas.width, height: canvas.height, dataUrlLength: dataUrl.length };
+    return { cells, width: canvas.width, height: canvas.height, dataUrlLength: dataUrl.length, blueBias: blueBias / (canvas.width * canvas.height) };
   }, { gridWidth: GRID_WIDTH, gridHeight: GRID_HEIGHT });
 }
 
@@ -208,6 +211,12 @@ async function loadSample(files) {
   return page.evaluate(() => window.__mzViewer.summary());
 }
 
+async function chooseMaterial(preset) {
+  await openTool(page, "#materialBtn");
+  await page.click(`[data-material="${preset}"]`);
+  await page.keyboard.press("Escape");
+}
+
 // ---------------------------------------------------------------- 1. boot
 
 if (remoteUrl === null) {
@@ -255,6 +264,7 @@ check("OBJ + MTL + 贴图加载", objSummary.models.length === 1 && objSummary.m
 
 await boot();
 const glbSummary = await loadSample([sample.glb]);
+await chooseMaterial("original");
 const glbFrame = await signature();
 const glbDiff = diffRatio(glbFrame, await baselineFrame());
 check("glTF/GLB 加载并渲染（含贴图）", glbSummary.models[0]?.triangles > 1000 && glbDiff > 0.02 && stdLuminance(glbFrame) > 5,
@@ -266,6 +276,16 @@ const stepFrame = await signature();
 const stepDiff = diffRatio(stepFrame, await baselineFrame());
 check("STEP 加载并渲染（OpenCascade wasm）", stepSummary.models[0]?.format === "step" && stepSummary.models[0]?.triangles > 100 && stepDiff > 0.02,
   `tri=${stepSummary.models[0]?.triangles} 模型占画面 ${(stepDiff * 100).toFixed(1)}%`);
+
+await openTool(page, "#materialBtn");
+check("STEP 打开即显示中性灰", await page.getAttribute('[data-material="gray"]', "aria-pressed") === "true" &&
+  await page.evaluate(() => window.__mzViewer.stage.active.appearance.surfaces.every(({ mesh }) =>
+    mesh.material.color.getHexString() === "696969")));
+await page.click('[data-material="blue"]');
+check("一键切换哑光蓝预设", (await signature()).blueBias > stepFrame.blueBias + 2);
+await page.click('[data-material="gray"]');
+await page.keyboard.press("Escape");
+check("切回默认灰后 STEP 画面一致", diffRatio(await signature(), stepFrame) < 0.01);
 
 await boot();
 const mfSummary = await loadSample([sample.mf]);
@@ -293,6 +313,17 @@ check("BREP 加载", brepSummary.models[0]?.format === "brep" && brepSummary.mod
 await boot();
 const multiSummary = await loadSample([sample.stl, sample.glb]);
 check("多文件同时打开", multiSummary.models.length === 2, multiSummary.models.map((model) => model.name).join(", "));
+await chooseMaterial("blue");
+await openTool(page, "#sidebarToggle");
+await page.locator("#modelList button.name").first().click();
+await page.click("#sidebarClose");
+await openTool(page, "#materialBtn");
+check("材质仅应用到所选模型", await page.getAttribute('[data-material="gray"]', "aria-pressed") === "true" &&
+  await page.evaluate(() => {
+    const [stl, glb] = window.__mzViewer.stage.modelList;
+    return stl.appearance.preset === "gray" && glb.appearance.preset === "blue";
+  }));
+await page.keyboard.press("Escape");
 
 await boot();
 await loadSample([junkFile]);
@@ -303,31 +334,50 @@ check("不支持的格式给提示而不是静默失败", junkToast.includes("�
 
 await boot();
 await loadSample([sample.stl]);
-const solidFrame = await signature();
-await page.click("#styleBtn");
-await page.waitForFunction(() => window.__mzViewer.summary().style === "edges", null, { timeout: 30000 });
-await page.waitForTimeout(600);
 const edgeFrame = await signature();
-const edgeDiff = diffRatio(edgeFrame, solidFrame);
+const defaultEdges = await page.isChecked("#styleEdges") &&
+  await page.getAttribute("#styleBtn", "aria-pressed") === "true" &&
+  await page.evaluate(() => window.__mzViewer.stage.active.edges?.visible === true);
 const edgeFrameAgain = await signature();
-check("带边线模式生效（谱面被画出边线）", edgeDiff > 0.002 && (await page.isChecked("#styleEdges")) === true,
-  `${(edgeDiff * 100).toFixed(2)}% 的格子变亮`);
+await page.click("#styleBtn");
+const solidFrame = await signature();
+const edgeDiff = diffRatio(edgeFrame, solidFrame);
+check("打开模型默认展示边线", edgeDiff > 0.002 && defaultEdges,
+  `${(edgeDiff * 100).toFixed(2)}% 的画面采样格发生变化`);
 check("边线模式像素稳定", diffRatio(edgeFrame, edgeFrameAgain) < 0.01, `${(diffRatio(edgeFrame, edgeFrameAgain) * 100).toFixed(2)}% 抖动`);
 
 await page.click("#styleBtn");
+await page.waitForFunction(() => window.__mzViewer.stage.active.edges?.visible === true);
+await page.click("#styleBtn");
+check("再次点击边线按钮恢复实体模式", await page.isChecked("#styleSolid") &&
+  await page.getAttribute("#styleBtn", "aria-pressed") === "false" && diffRatio(await signature(), solidFrame) < 0.01);
+await page.click("#displayBtn");
+await page.waitForFunction(() => document.getElementById("displayMenu").matches(":popover-open"));
+const displayChips = await page.$$eval("#displayMenu .chip", (chips) => chips.map((chip) => chip.textContent.trim()));
+await page.click("#displayMenu .chip:has(#styleWireframe)");
+const displayMenuWired = await page.evaluate(() => window.__mzViewer.summary().style === "wireframe" &&
+  document.getElementById("displayMenu").matches(":popover-open") === false);
+await page.click("#displayBtn");
+await page.click("#displayMenu .chip:has(#styleSolid)");
+await page.waitForFunction(() => window.__mzViewer.summary().style === "solid" && document.getElementById("progressWrap").hidden);
+check("显示菜单提供实体 / 边线 / 线框 / 透射并即时生效", displayMenuWired && displayChips.join("/") === "实体/边线/线框/透射",
+  `chips=${displayChips.join("/")} wired=${displayMenuWired}`);
+
+await page.keyboard.press("w");
+await page.keyboard.press("w");
 await page.waitForFunction(() => window.__mzViewer.summary().style === "wireframe", null, { timeout: 30000 });
 await page.waitForTimeout(600);
 const wireFrame = await signature();
 check("线框模式生效", meanLuminance(wireFrame) < meanLuminance(solidFrame) * 0.9,
   `实心亮度 ${meanLuminance(solidFrame).toFixed(1)} → 线框 ${meanLuminance(wireFrame).toFixed(1)}`);
-await page.click("#styleBtn");
+await page.keyboard.press("w");
 await page.waitForTimeout(300);
 const xrayFrame = await signature();
 check("X-ray 透射模式产生不同渲染", (await page.evaluate(() => window.__mzViewer.summary().style)) === "xray" && diffRatio(xrayFrame, solidFrame) > 0.01);
-await page.click("#styleBtn");
+await page.keyboard.press("w");
 await page.waitForTimeout(300);
 
-await page.click("#sidebarToggle");
+await openTool(page, "#sidebarToggle");
 await page.locator(".model-item .icon-btn").first().click();
 await page.waitForTimeout(300);
 const hiddenState = await page.evaluate(() => window.__mzViewer.summary());
@@ -363,7 +413,7 @@ const frontViewPosition = await page.evaluate(() => {
 check("标准视图切换真的动了相机", topViewPosition[1] !== frontViewPosition[1] && Math.abs(frontViewPosition[2]) > Math.abs(frontViewPosition[0]),
   `顶 ${topViewPosition.map((v) => v.toFixed(1)).join(",")} → 前 ${frontViewPosition.map((v) => v.toFixed(1)).join(",")}`);
 
-await page.click("#sidebarToggle");
+await openTool(page, "#sidebarToggle");
 await page.click("#sectionDetails summary");
 await page.check("#sectionToggle");
 await page.fill("#sectionOffset", "0");
@@ -400,7 +450,7 @@ check("适应视图后模型撑满画面", fittedBox.widthRatio > 0.5 || fittedB
   `跨度 ${(fittedBox.widthRatio * 100).toFixed(0)}% × ${(fittedBox.heightRatio * 100).toFixed(0)}%`);
 
 const beforeRemove = (await page.evaluate(() => window.__mzViewer.summary())).models.length;
-await page.click("#sidebarToggle");
+await openTool(page, "#sidebarToggle");
 await page.click(".model-item .icon-btn:last-child");
 await page.waitForTimeout(300);
 const afterRemove = await page.evaluate(() => window.__mzViewer.summary());
@@ -517,8 +567,8 @@ check("回退路径无控制台错误", consoleErrors.length === 0 && pageErrors
 await page.setViewportSize({ width: 390, height: 844 });
 await boot();
 const initiallyClosed = !(await page.isVisible("#settingsPanel"));
-const toggleVisible = await page.isVisible("#sidebarToggle");
-await page.click("#sidebarToggle");
+const toggleVisible = await page.isVisible("#toolsToggle");
+await openTool(page, "#sidebarToggle");
 await page.waitForTimeout(400);
 check("窄屏（390×844）：设置默认收起、工具按钮能展开", toggleVisible && initiallyClosed && await page.isVisible("#settingsPanel"));
 
@@ -534,9 +584,9 @@ check("窄屏下能打开并渲染模型", mobileSummary.models.length === 1 && 
 // Responsive controls must remain reachable on small phones and in landscape.
 for (const [width, height] of [[320, 568], [844, 390]]) {
   await page.setViewportSize({ width, height });
-  await page.click("#sidebarToggle");
+  await openTool(page, "#sidebarToggle");
   await page.click("#sidebarClose");
-  await page.click("#sidebarToggle");
+  await openTool(page, "#sidebarToggle");
   await page.keyboard.press("Escape");
   await page.waitForFunction(() => document.getElementById("sidebarToggle").getAttribute("aria-expanded") === "false");
   const layoutOk = await page.evaluate(() => {
@@ -548,8 +598,15 @@ for (const [width, height] of [[320, 568], [844, 390]]) {
   });
   check(`触控布局 ${width}×${height}：按钮可达、面板可关闭`, layoutOk &&
     await page.getAttribute("#sidebarToggle", "aria-expanded") === "false");
+  await openTool(page, "#materialBtn");
+  await page.click('[data-material="blue"]');
+  const panel = await page.locator("#materialPanel").boundingBox();
+  check(`触控布局 ${width}×${height}：材质面板可用`, panel !== null &&
+    panel.x >= 0 && panel.y >= 0 && panel.x + panel.width <= width && await page.getAttribute('[data-material="blue"]', "aria-pressed") === "true");
+  await page.click('[data-material="gray"]');
+  await page.keyboard.press("Escape");
 }
-await page.click("#sidebarToggle");
+await openTool(page, "#sidebarToggle");
 await page.locator('#modelList button[title="移除"]').click();
 await page.click("#sidebarClose");
 check("移除最后一个模型恢复空状态", await page.isVisible("#emptyOpenBtn") &&

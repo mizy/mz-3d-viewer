@@ -1,5 +1,9 @@
 node_modules/
 dist/
+storybook-static/
 .video-analysis/
+.workbuddy/
 .DS_Store
 *.log
+dist-lib/
+*.tgz

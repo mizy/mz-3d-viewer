@@ -25,6 +25,11 @@ export type CameraController = {
   readonly kind: ControllerKind;
   /** Focal point the camera orbits and looks at. Framing writes it, the acceptance scripts read it. */
   readonly target: THREE.Vector3;
+  /**
+   * Moves whatever pivot bookkeeping the controller keeps of its own, after the host shifted the
+   * camera and the focal point together. Only Arcball needs it; see `ControllerHost.setPivot`.
+   */
+  shiftAnchor(delta: THREE.Vector3): void;
   update(): void;
   /** Rotates the camera around the focal point by a screen-space delta (NavCube drag / arrow keys). */
   rotateView(horizontal: number, vertical: number): void;
@@ -73,7 +78,8 @@ function orbitCamera(camera: THREE.Camera, target: THREE.Vector3, horizontal: nu
 type ArcballInternals = {
   target: THREE.Vector3;
   updateMatrixState(): void;
-  _gizmos?: { position: THREE.Vector3 };
+  _gizmos?: THREE.Object3D;
+  _currentTarget?: THREE.Vector3;
 };
 
 function arcballInternals(controls: ArcballControls): ArcballInternals {
@@ -98,6 +104,8 @@ class OrbitAdapter implements CameraController {
   update(): void {
     this.controls.update();
   }
+
+  shiftAnchor(): void {}
 
   rotateView(horizontal: number, vertical: number): void {
     this.controls.rotateLeft(horizontal);
@@ -155,6 +163,20 @@ class ArcballAdapter implements CameraController {
 
   update(): void {
     this.controls.update();
+  }
+
+  /**
+   * Arcball rotates around its gizmo anchor and compares `target` with a cached copy every
+   * update() — a target that moved without its anchor would rebuild the gizmo geometry. Carry
+   * all three along with the host's shift instead.
+   */
+  shiftAnchor(delta: THREE.Vector3): void {
+    const gizmos = this.internals._gizmos;
+    if (gizmos !== undefined) {
+      gizmos.position.add(delta);
+      gizmos.updateMatrix();
+    }
+    this.internals._currentTarget?.add(delta);
   }
 
   rotateView(horizontal: number, vertical: number): void {
@@ -225,6 +247,8 @@ class TrackballAdapter implements CameraController {
     this.controls.update();
   }
 
+  shiftAnchor(): void {}
+
   rotateView(horizontal: number, vertical: number): void {
     orbitCamera(this.camera, this.controls.target, horizontal, vertical);
     this.controls.update();
@@ -276,6 +300,18 @@ function createController(kind: ControllerKind, camera: THREE.Camera, canvas: HT
 export class ControllerHost implements CameraController {
   private current: CameraController;
   private readonly listeners = new Set<() => void>();
+  /**
+   * Called with the pivot whenever a drag actually rotates about it, so the stage can show its
+   * marker. Fires once per frame that rotated, not once per press.
+   */
+  onPivotRotate: ((pivot: THREE.Vector3) => void) | null = null;
+  /** World point a drag rotates around; null means "the focal point", the classic behaviour. */
+  private pivot: THREE.Vector3 | null = null;
+  /** Camera orientation at the last settled frame, to recover the rotation a controller applied. */
+  private readonly pivotQuaternion = new THREE.Quaternion();
+  private readonly appliedRotation = new THREE.Quaternion();
+  private readonly pivotOffset = new THREE.Vector3();
+  private readonly pivotShift = new THREE.Vector3();
 
   constructor(
     private camera: THREE.Camera,
@@ -317,6 +353,59 @@ export class ControllerHost implements CameraController {
 
   update(): void {
     this.current.update();
+    this.settlePivot();
+  }
+
+  /**
+   * @entry Orbit around `point` from now on, without moving the image.
+   *
+   * All three controllers rotate about their focal point, and that focal point is pinned to the
+   * centre of the screen by their own `lookAt` — so pressing on a part cannot simply move it.
+   * The host instead re-expresses whatever they rotated as a rotation about `point`: rotating
+   * about the focal point T and then translating by (I − R)(P − T) is exactly a rotation about P,
+   * and translating the focal point along keeps the controller's `lookAt` consistent.
+   */
+  setPivot(point: THREE.Vector3): void {
+    this.pivot = point.clone();
+    this.pivotQuaternion.copy(this.camera.quaternion);
+  }
+
+  /** Forget the cursor pivot; the next rotation is about the focal point again. */
+  clearPivot(): void {
+    this.pivot = null;
+  }
+
+  shiftAnchor(delta: THREE.Vector3): void {
+    this.current.shiftAnchor(delta);
+  }
+
+  /** See `setPivot`. Runs after every controller update, so it sees one drag step at a time. */
+  private settlePivot(): void {
+    const pivot = this.pivot;
+    if (pivot === null || this.pivotQuaternion.equals(this.camera.quaternion)) return;
+    // Damping approaches zero without reaching it. Ignoring what the eye cannot see keeps the
+    // marker's linger timer from being pushed out by the last millionth of a degree.
+    const dot = Math.min(1, Math.abs(this.pivotQuaternion.dot(this.camera.quaternion)));
+    if (2 * Math.acos(dot) < 1e-4) {
+      this.pivotQuaternion.copy(this.camera.quaternion);
+      return;
+    }
+    const target = this.current.target;
+    this.appliedRotation.copy(this.pivotQuaternion).invert().premultiply(this.camera.quaternion);
+    this.onPivotRotate?.(pivot);
+    this.pivotOffset.copy(pivot).sub(target);
+    this.pivotShift.copy(this.pivotOffset).applyQuaternion(this.appliedRotation).negate().add(this.pivotOffset);
+    this.pivotQuaternion.copy(this.camera.quaternion);
+    // A rotation can move the camera by at most 2·|P − T|, so anything past that came from a
+    // programmatic pose change that slipped through without clearing the pivot.
+    if (this.pivotShift.length() > this.pivotOffset.length() * 4 + 1e-6) {
+      this.pivot = null;
+      return;
+    }
+    this.camera.position.add(this.pivotShift);
+    target.add(this.pivotShift);
+    this.current.shiftAnchor(this.pivotShift);
+    this.current.syncCamera();
   }
 
   rotateView(horizontal: number, vertical: number): void {
@@ -356,6 +445,7 @@ export class ControllerHost implements CameraController {
 
   /** A fresh controller for the given model and camera, carrying the pose and focal point over. */
   private rebuild(kind: ControllerKind, camera: THREE.Camera): void {
+    this.pivot = null;
     const focal = this.current.target.clone();
     const position = camera.position.clone();
     const quaternion = camera.quaternion.clone();

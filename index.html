@@ -13,20 +13,32 @@
 <link rel="stylesheet" href="./src/ui/styles.css" />
 </head>
 <body>
-<svg class="icon-defs" aria-hidden="true"><defs><symbol id="i-cube" viewBox="0 0 24 24"><path d="M12 3 21 8v9l-9 5-9-5V8l9-5Z M3 8l9 5 9-5 M12 13v9"/></symbol><symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14 M5 12h14"/></symbol><symbol id="i-settings" viewBox="0 0 24 24"><path d="M4 7h16 M4 17h16 M8 4v6 M16 14v6"/></symbol><symbol id="i-layers" viewBox="0 0 24 24"><path d="m12 3 9 5-9 5-9-5 9-5Z M3 12l9 5 9-5 M3 16l9 5 9-5"/></symbol><symbol id="i-explode" viewBox="0 0 24 24"><path d="m12 8 5 4-5 4-5-4 5-4Z M12 2v3 M12 19v3 M2 7l3 2 M19 15l3 2 M2 17l3-2 M19 9l3-2"/></symbol><symbol id="i-fit" viewBox="0 0 24 24"><path d="M8 3H3v5 M16 3h5v5 M3 16v5h5 M21 16v5h-5 M8 12h8 M12 8v8"/></symbol><symbol id="i-close" viewBox="0 0 24 24"><path d="m6 6 12 12 M6 18 18 6"/></symbol><symbol id="i-arrow" viewBox="0 0 24 24"><path d="M5 12h14 m-6-6 6 6-6 6"/></symbol><symbol id="i-home" viewBox="0 0 24 24"><path d="m3 11 9-8 9 8 M5 10v11h5v-7h4v7h5V10"/></symbol><symbol id="i-lock" viewBox="0 0 24 24"><path d="M7 10V7a5 5 0 0 1 10 0v3 M5 10h14v11H5V10Z"/></symbol></defs></svg>
+<svg class="icon-defs" aria-hidden="true"><defs><symbol id="i-cube" viewBox="0 0 24 24"><path d="M12 3 21 8v9l-9 5-9-5V8l9-5Z M3 8l9 5 9-5 M12 13v9"/></symbol><symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14 M5 12h14"/></symbol><symbol id="i-settings" viewBox="0 0 24 24"><path d="M4 7h16 M4 17h16 M8 4v6 M16 14v6"/></symbol><symbol id="i-layers" viewBox="0 0 24 24"><path d="m12 3 9 5-9 5-9-5 9-5Z M3 12l9 5 9-5 M3 16l9 5 9-5"/></symbol><symbol id="i-explode" viewBox="0 0 24 24"><path d="m12 8 5 4-5 4-5-4 5-4Z M12 2v3 M12 19v3 M2 7l3 2 M19 15l3 2 M2 17l3-2 M19 9l3-2"/></symbol><symbol id="i-fit" viewBox="0 0 24 24"><path d="M8 3H3v5 M16 3h5v5 M3 16v5h5 M21 16v5h-5 M8 12h8 M12 8v8"/></symbol><symbol id="i-close" viewBox="0 0 24 24"><path d="m6 6 12 12 M6 18 18 6"/></symbol><symbol id="i-arrow" viewBox="0 0 24 24"><path d="M5 12h14 m-6-6 6 6-6 6"/></symbol><symbol id="i-home" viewBox="0 0 24 24"><path d="m3 11 9-8 9 8 M5 10v11h5v-7h4v7h5V10"/></symbol><symbol id="i-eye" viewBox="0 0 24 24"><path d="M2 12s3.6-6 10-6 10 6 10 6-3.6 6-10 6S2 12 2 12Z M12 9.2a2.8 2.8 0 1 0 0 5.6 2.8 2.8 0 0 0 0-5.6Z"/></symbol><symbol id="i-lock" viewBox="0 0 24 24"><path d="M7 10V7a5 5 0 0 1 10 0v3 M5 10h14v11H5V10Z"/></symbol></defs></svg>
 <div class="app" id="app">
   <main class="stage" id="stage" aria-label="3D 模型工作台">
     <canvas id="view" aria-label="模型画布：单指旋转，双指缩放和平移"></canvas>
-    <div class="stage-vignette" aria-hidden="true"></div>
+    <div id="pivotGizmo" class="pivot-gizmo" aria-hidden="true" hidden>
+      <svg viewBox="0 0 26 26" aria-hidden="true">
+        <g fill="none" stroke="#05090c" stroke-opacity="0.5" stroke-width="3.6" stroke-linecap="round">
+          <circle cx="13" cy="13" r="7" /><path d="M13 0.8v3M13 22.2v3M0.8 13h3M22.2 13h3" />
+        </g>
+        <g fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round">
+          <circle cx="13" cy="13" r="7" /><path d="M13 0.8v3M13 22.2v3M0.8 13h3M22.2 13h3" />
+        </g>
+        <circle cx="13" cy="13" r="1.4" fill="currentColor" />
+      </svg>
+    </div>
+    <svg class="measure-overlay" id="measureOverlay" aria-hidden="true" hidden>
+      <polyline id="measureLine" />
+      <circle r="4" /><circle r="4" /><circle r="4" />
+    </svg>
+    <div id="scaleBar" class="scale-bar" aria-label="比例尺" hidden><span></span></div>
     <div id="dropHint" class="drop-hint">
       <div class="drop-hint-inner">
-        <div class="hero-object" aria-hidden="true"><div class="hero-orbit"></div><div class="hero-stack"><i></i><i></i><i></i></div></div>
-        <span class="eyebrow">A NEW PERSPECTIVE</span>
-        <h1>每一面，<br />都值得探索<span>。</span></h1>
-        <p>打开模型，旋转、拆解，发现更多。</p>
-        <button id="emptyOpenBtn" class="btn btn-primary" type="button">选择模型 <svg class="icon" aria-hidden="true"><use href="#i-arrow"/></svg></button>
-        <button id="demoBtn" class="text-btn" type="button">体验装配示例 <span>↗</span></button>
-        <span class="format-list">STL / OBJ / GLB / 3MF / STEP / IGES / BREP</span>
+        <h1>打开 3D 模型</h1>
+        <p>拖入文件，或从本机选择。</p>
+        <button id="emptyOpenBtn" class="btn btn-primary" type="button">选择模型</button>
+        <button id="demoBtn" class="text-btn" type="button">查看装配示例</button>
       </div>
     </div>
     <div id="dragOverlay" class="drag-overlay" hidden><span>释放文件，开始探索</span></div>
@@ -36,24 +48,18 @@
       <div class="progress-track"><div id="progressBar" class="progress-bar"></div></div>
     </div>
     <div id="toast" class="toast glass" role="status" hidden></div>
+    <div id="contextMenu" class="context-menu glass" role="menu" aria-label="模型操作" tabindex="-1" hidden></div>
   </main>
 
   <header class="topbar">
     <a id="brandLink" class="brand" href="./" title="回到首页" aria-label="MZ 3D 首页（回到首页）"><svg class="icon" aria-hidden="true"><use href="#i-cube"/></svg><span>MZ<span class="brand-light"> / 3D</span></span></a>
-    <div class="topbar-actions"><span class="local-label"><svg class="icon" aria-hidden="true"><use href="#i-lock"/></svg> 本地 · 私密</span><button id="openBtn" class="btn btn-open" type="button"><svg class="icon" aria-hidden="true"><use href="#i-plus"/></svg><span>打开模型</span></button></div>
+    <button id="openBtn" class="btn btn-open" type="button"><svg class="icon" aria-hidden="true"><use href="#i-plus"/></svg><span>打开模型</span></button>
   </header>
-  <div class="model-caption"><span class="live-dot"></span><span id="activeName">无限视角，尽在本地。</span></div>
+  <div class="model-caption" id="modelCaption" hidden><span id="activeName"></span></div>
 
   <div class="navigation" id="navigation" aria-label="视角导航">
-    <div id="navCube" class="navcube" tabindex="0" role="group" aria-label="导航立方体：拖动旋转，点击面切换视角。方向键旋转，数字 1 到 6 切换六面，Home 回到等轴视图；最近一角的三条棱显示 X/Y/Z 轴向。">
-      <div class="cube">
-        <button type="button" class="cube-face front" data-view="front" tabindex="-1" aria-label="前视图">前</button>
-        <button type="button" class="cube-face back" data-view="back" tabindex="-1" aria-label="后视图">后</button>
-        <button type="button" class="cube-face right" data-view="right" tabindex="-1" aria-label="右视图">右</button>
-        <button type="button" class="cube-face left" data-view="left" tabindex="-1" aria-label="左视图">左</button>
-        <button type="button" class="cube-face top" data-view="top" tabindex="-1" aria-label="顶视图">顶</button>
-        <button type="button" class="cube-face bottom" data-view="bottom" tabindex="-1" aria-label="底视图">底</button>
-      </div>
+    <div id="navCube" class="navcube" tabindex="0" role="group" aria-label="导航立方体：点击面、棱或角切换视角，拖动或按方向键旋转。数字 1 到 6 切换六面，Home 回到等轴视图。">
+      <div class="cube"></div>
       <svg class="axis-overlay" aria-hidden="true" focusable="false">
         <line class="axis-edge axis-x" /><line class="axis-edge axis-y" /><line class="axis-edge axis-z" />
         <circle class="axis-dot axis-x" r="2.6" /><circle class="axis-dot axis-y" r="2.6" /><circle class="axis-dot axis-z" r="2.6" />
@@ -62,7 +68,13 @@
         <text class="axis-label axis-z">Z</text>
       </svg>
     </div>
-    <button id="isoBtn" class="nav-home" type="button" aria-label="等轴视图" title="等轴视图"><svg class="icon" aria-hidden="true"><use href="#i-home"/></svg></button>
+    <div class="nav-actions">
+      <button id="isoBtn" class="nav-home" type="button" aria-label="等轴视图" title="等轴视图"><svg class="icon" aria-hidden="true"><use href="#i-home"/></svg></button>
+      <div class="projection-switch" role="radiogroup" aria-label="相机投影">
+        <label class="chip" title="平行投影"><input type="radio" name="projection" id="projectionOrthographic" />正交</label>
+        <label class="chip" title="近大远小"><input type="radio" name="projection" id="projectionPerspective" checked />透视</label>
+      </div>
+    </div>
   </div>
 
   <div id="explodePanel" class="explode-panel glass" popover="auto">
@@ -71,51 +83,81 @@
     <input id="explodeRange" type="range" min="0" max="100" value="0" aria-label="部件分离程度" />
     <div class="explode-actions"><button id="assembleBtn" class="text-btn" type="button">还原装配</button><button id="separateBtn" class="text-btn" type="button">完全展开 ↗</button></div>
   </div>
+  <div id="materialPanel" class="material-panel glass" popover="auto" role="group" aria-labelledby="materialTitle">
+    <h2 id="materialTitle">模型材质</h2>
+    <p id="materialTarget"></p>
+    <div class="material-options" role="group" aria-label="材质预设">
+      <button type="button" class="btn" data-material="gray">默认灰</button>
+      <button type="button" class="btn" data-material="blue">哑光蓝</button>
+      <button type="button" class="btn" data-material="aluminum">缎面铝</button>
+      <button type="button" class="btn" data-material="original">原始材质</button>
+    </div>
+  </div>
   <aside id="entitiesPanel" class="entities-panel glass" aria-labelledby="entitiesTitle" hidden>
     <div class="entities-heading"><h2 id="entitiesTitle">部件 <small>ENTITIES · <span id="entityCount">0</span></small></h2><button id="entitiesClose" class="icon-btn" type="button" aria-label="关闭部件列表">×</button></div>
     <input id="entitySearch" type="search" placeholder="按部件名称搜索" aria-label="搜索部件" />
     <ul id="entityList" class="entity-list"></ul>
     <div class="entities-actions"><button id="isolatePartBtn" class="text-btn" type="button" disabled>只看选中</button><button id="showPartsBtn" class="text-btn" type="button">全部显示</button><button id="clearPartBtn" class="text-btn" type="button" disabled>取消选择</button></div>
   </aside>
+  <section id="measurePanel" class="measure-panel glass" aria-label="测量" hidden>
+    <div class="measure-options">
+      <label class="row">测量<select id="measureMode"><option value="distance">两点距离</option><option value="angle">三点角度</option></select></label>
+      <button class="icon-btn" type="button" id="measureClose" aria-label="关闭测量">×</button>
+    </div>
+    <label class="row switch-row">顶点吸附 <input type="checkbox" id="measureSnap" checked /></label>
+    <p id="measurePrompt"></p>
+    <div class="measure-options"><output id="measureValue" aria-live="polite"></output><button id="measureReset" class="text-btn" type="button" disabled>清除</button></div>
+  </section>
   <nav class="tool-dock glass" aria-label="模型工具">
-    <button id="sidebarToggle" class="dock-btn" type="button" aria-controls="settingsPanel" aria-expanded="false"><svg class="icon" aria-hidden="true"><use href="#i-settings"/></svg><span>工具</span></button>
-    <button id="entitiesBtn" class="dock-btn" type="button" aria-controls="entitiesPanel" aria-expanded="false" disabled><svg class="icon" aria-hidden="true"><use href="#i-cube"/></svg><span>部件</span></button>
-    <button id="styleBtn" class="dock-btn" type="button" disabled><svg class="icon" aria-hidden="true"><use href="#i-layers"/></svg><span id="styleLabel">实体</span></button>
-    <button id="explodeBtn" class="dock-btn" type="button" popovertarget="explodePanel" disabled><svg class="icon" aria-hidden="true"><use href="#i-explode"/></svg><span>爆炸</span></button>
-    <span class="dock-divider"></span>
+    <button id="styleBtn" class="dock-btn" type="button" aria-pressed="false" title="显示边线" disabled><svg class="icon" aria-hidden="true"><use href="#i-layers"/></svg><span>边线</span></button>
+    <button id="displayBtn" class="dock-btn" type="button" popovertarget="displayMenu" disabled><svg class="icon" aria-hidden="true"><use href="#i-eye"/></svg><span>显示</span></button>
     <button id="fitBtn" class="dock-btn" type="button" disabled><svg class="icon" aria-hidden="true"><use href="#i-fit"/></svg><span>适应</span></button>
+    <button id="toolsToggle" class="dock-btn" type="button" popovertarget="toolsMenu"><svg class="icon" aria-hidden="true"><use href="#i-settings"/></svg><span>工具</span></button>
   </nav>
-  <footer class="stage-footer"><span id="statStatus">等待文件</span><span class="desktop-hint">拖动旋转 · 滚轮缩放</span><span class="touch-hint">单指旋转 · 双指缩放</span></footer>
+  <div id="displayMenu" class="display-menu glass" popover="auto" role="radiogroup" aria-label="显示模式">
+    <label class="chip"><input type="radio" name="style" id="styleSolid" />实体</label>
+    <label class="chip"><input type="radio" name="style" id="styleEdges" />边线</label>
+    <label class="chip"><input type="radio" name="style" id="styleWireframe" />线框</label>
+    <label class="chip"><input type="radio" name="style" id="styleXray" />透射</label>
+  </div>
+  <div id="toolsMenu" class="tool-menu glass" popover="auto" role="group" aria-label="查看工具">
+    <button id="entitiesBtn" class="dock-btn" type="button" aria-controls="entitiesPanel" aria-expanded="false" disabled><svg class="icon" aria-hidden="true"><use href="#i-cube"/></svg><span>部件</span></button>
+    <button id="materialBtn" class="dock-btn" type="button" popovertarget="materialPanel" disabled><span class="material-icon" aria-hidden="true"></span><span>材质</span></button>
+    <button id="explodeBtn" class="dock-btn" type="button" popovertarget="explodePanel" disabled><svg class="icon" aria-hidden="true"><use href="#i-explode"/></svg><span>爆炸</span></button>
+    <button id="measureBtn" class="dock-btn" type="button" aria-controls="measurePanel" aria-expanded="false" disabled><span class="ruler-icon" aria-hidden="true"></span><span>测量</span></button>
+    <button id="sidebarToggle" class="dock-btn" type="button" aria-controls="settingsPanel" aria-expanded="false"><svg class="icon" aria-hidden="true"><use href="#i-settings"/></svg><span>场景设置</span></button>
+  </div>
+  <span class="sr-only" id="statStatus" role="status">等待文件</span>
 
   <dialog class="sidebar glass" id="settingsPanel" aria-labelledby="settingsTitle">
-    <div class="sidebar-heading"><div><span class="eyebrow">WORKSPACE</span><h2 id="settingsTitle">你的工作台</h2></div><button id="sidebarClose" class="icon-btn" type="button" aria-label="关闭设置面板"><svg class="icon" aria-hidden="true"><use href="#i-close"/></svg></button></div>
-    <section class="panel"><h3>场景模型</h3><ul id="modelList" class="model-list"></ul></section>
+    <div class="sidebar-heading"><h2 id="settingsTitle">场景设置</h2><button id="sidebarClose" class="icon-btn" type="button" aria-label="关闭设置面板"><svg class="icon" aria-hidden="true"><use href="#i-close"/></svg></button></div>
+    <section class="panel"><div class="models-heading"><h3>场景模型</h3><button type="button" class="text-btn" id="fitAllBtn" disabled>适应全部</button></div><ul id="modelList" class="model-list"></ul></section>
     <section class="panel"><h3>显示</h3>
-      <div class="row" role="radiogroup" aria-label="显示模式">
-        <label class="chip"><input type="radio" name="style" id="styleSolid" checked />实体</label>
-        <label class="chip"><input type="radio" name="style" id="styleEdges" />边线</label>
-        <label class="chip"><input type="radio" name="style" id="styleWireframe" />线框</label>
-        <label class="chip"><input type="radio" name="style" id="styleXray" />透射</label>
-      </div>
       <label class="row switch-row">地板网格 <input type="checkbox" id="gridToggle" /></label>
       <label class="row switch-row">环境反射 <input type="checkbox" id="environmentToggle" checked /></label>
+      <label class="row switch-row">浅色背景 <input type="checkbox" id="lightBackground" /></label>
     </section>
     <details class="panel" id="cameraDetails"><summary>视角操作</summary>
-      <div class="row" role="radiogroup" aria-label="投影方式">
-        <label class="chip"><input type="radio" name="projection" id="projectionPerspective" checked />透视</label>
-        <label class="chip"><input type="radio" name="projection" id="projectionOrthographic" />正交</label>
-      </div>
       <label class="row">控制器<select id="controllerSelect" aria-label="相机控制器">
         <option value="orbit" selected>轨道 Orbit</option>
         <option value="arcball">旋转球 Arcball</option>
         <option value="trackball">轨迹球 Trackball</option>
       </select></label>
-      <p class="panel-note">正交是平行投影，没有近大远小，量尺寸和对比工程图时更准确；透视更接近人眼观感。轨道围绕目标点旋转、上下受限；旋转球没有上下限制，可以连续翻转；轨迹球自由翻滚，接近传统 CAD 手感。选择会记住，画布拖动与 NavCube 在两种投影下都可用。</p>
+      <p class="panel-note">轨道围绕目标点旋转、上下受限。旋转球可连续翻转，轨迹球可自由翻滚。控制器适用于两种投影。</p>
     </details>
     <details class="panel" id="sectionDetails"><summary>剖面分析</summary>
       <label class="row switch-row">启用剖面 <input type="checkbox" id="sectionToggle" /></label>
-      <label class="row">方向<select id="sectionAxisSelect" disabled><option value="x">沿 X 切</option><option value="y">沿 Y 切</option><option value="z">沿 Z 切</option></select></label>
-      <label class="row">位置<input type="range" id="sectionOffset" min="0" max="100" value="50" disabled /></label>
+      <div class="section-grid">
+        <label class="section-axis"><input type="checkbox" id="sectionX" aria-label="X 剖面" checked disabled /> X</label>
+        <input type="range" id="sectionOffset" aria-label="X 剖面位置" min="0" max="100" value="50" disabled />
+        <button type="button" class="text-btn" id="sectionFlipX" aria-label="反转 X 剖面" aria-pressed="false" disabled>反转</button>
+        <label class="section-axis"><input type="checkbox" id="sectionY" aria-label="Y 剖面" disabled /> Y</label>
+        <input type="range" id="sectionOffsetY" aria-label="Y 剖面位置" min="0" max="100" value="50" disabled />
+        <button type="button" class="text-btn" id="sectionFlipY" aria-label="反转 Y 剖面" aria-pressed="false" disabled>反转</button>
+        <label class="section-axis"><input type="checkbox" id="sectionZ" aria-label="Z 剖面" disabled /> Z</label>
+        <input type="range" id="sectionOffsetZ" aria-label="Z 剖面位置" min="0" max="100" value="50" disabled />
+        <button type="button" class="text-btn" id="sectionFlipZ" aria-label="反转 Z 剖面" aria-pressed="false" disabled>反转</button>
+      </div>
     </details>
     <details class="panel"><summary>模型信息与精度</summary>
       <dl id="statsBox" class="stats"></dl>
@@ -124,6 +166,7 @@
       <p class="panel-note">源单位决定文件坐标的实际尺寸，仅单位未知的模型需要指定；显示单位只改变读数。</p>
       <label class="row">CAD 精度<select id="cadQualitySelect"><option value="fast">快速</option><option value="standard" selected>标准</option><option value="fine">精细</option></select></label>
       <label class="row">边线角度<select id="edgeAngleSelect"><option value="15">15°</option><option value="30" selected>30°</option><option value="45">45°</option></select></label>
+      <label class="row">边线粗细<input type="range" id="edgeWidthRange" aria-label="边线粗细（像素）" min="1" max="4" step="0.5" value="2" /><output id="edgeWidthValue" class="mono">2.0px</output></label>
     </details>
     <div class="export-actions"><button id="shotBtn" class="btn" type="button" disabled>保存截图</button><button id="fullscreenBtn" class="btn" type="button">全屏查看</button></div>
     <footer class="sidebar-footer"><span>文件仅在本机处理，无需上传。</span><div><span id="backendBadge" class="badge">检测中…</span><span id="buildStamp" class="mono">build dev</span></div><div id="cadEngineState" class="mono"></div></footer>

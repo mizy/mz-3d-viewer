@@ -1,4 +1,5 @@
 import { assetBase } from "./assetBase";
+import { configureCadAssets } from "./cadAssets";
 import { createApp } from "./ui/app";
 import { createRenderer, forceWebGLFromUrl } from "./renderer/createRenderer";
 import { Stage } from "./viewer/stage";
@@ -14,10 +15,11 @@ function must<T extends HTMLElement>(id: string): T {
 
 const canvas = must<HTMLCanvasElement>("view");
 canvas.dataset["assetBase"] = assetBase;
+configureCadAssets({ baseUrl: `${assetBase}wasm/occt/` });
 
 const forceWebGL = forceWebGLFromUrl(location.search);
 const { renderer, backend } = await createRenderer(canvas, forceWebGL);
-const stage = new Stage(renderer, canvas);
+const stage = new Stage(renderer, canvas, must("pivotGizmo"));
 stage.resize();
 
 const app = createApp(stage, backend, forceWebGL);
