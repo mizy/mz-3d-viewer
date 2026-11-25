@@ -37,14 +37,15 @@ jobs:
       - run: pnpm build:pkg
       - name: Select the Mesa software Vulkan adapter
         run: |
-          driver=$(find /usr/share/vulkan/icd.d -name 'lvp_icd*.json' -print -quit)
-          if [[ -z "$driver" ]]; then
+          shopt -s nullglob
+          drivers=(/usr/share/vulkan/icd.d/lvp_icd*.json)
+          if (( ${#drivers[@]} == 0 )); then
             sudo apt-get update -qq
             sudo apt-get install -y --no-install-recommends mesa-vulkan-drivers
-            driver=$(find /usr/share/vulkan/icd.d -name 'lvp_icd*.json' -print -quit)
+            drivers=(/usr/share/vulkan/icd.d/lvp_icd*.json)
           fi
-          test -r "$driver"
-          printf 'VK_DRIVER_FILES=%s\n' "$driver" >> "$GITHUB_ENV"
+          test -r "${drivers[0]:-}"
+          printf 'VK_DRIVER_FILES=%s\n' "${drivers[0]}" >> "$GITHUB_ENV"
       - run: pnpm verify:package
         timeout-minutes: 3
       - id: package
