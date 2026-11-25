@@ -53,8 +53,7 @@ await new Promise((resolve) => server.listen(port, "127.0.0.1", resolve));
 
 const gpuArgs = ["--enable-unsafe-webgpu"];
 if (process.platform === "linux") {
-  gpuArgs.push("--enable-features=Vulkan", "--use-angle=vulkan", "--use-vulkan=swiftshader",
-    "--use-webgpu-adapter=swiftshader", "--disable-vulkan-surface", "--disable-gpu-watchdog");
+  gpuArgs.push("--enable-features=Vulkan", "--use-angle=vulkan", "--disable-vulkan-surface");
 }
 if (process.platform === "darwin") gpuArgs.push("--use-angle=metal");
 const browser = await chromium.launch({ channel: "chrome", args: gpuArgs });
@@ -94,11 +93,19 @@ try {
   await page.goto(`${base}/scripts/package-demo.html`, { waitUntil: "load" });
   await page.waitForFunction(() => window.__ready === true, null, { timeout: 60000 });
 
-  const meta = await page.evaluate(() => ({ presets: window.__pkg.presets, detect: window.__pkg.detect, backend: window.__pkg.viewer.backend }));
+  const meta = await page.evaluate(() => {
+    const { presets, detect, viewer } = window.__pkg;
+    const adapter = viewer.stage.renderer.backend.device.adapterInfo;
+    return {
+      presets, detect, backend: viewer.backend,
+      adapter: { vendor: adapter?.vendor, architecture: adapter?.architecture, device: adapter?.description }
+    };
+  });
   assert.deepEqual(meta.presets, ["fast", "standard", "fine"], "quality presets exported");
   assert.equal(meta.detect, "step", "detectFormat exported");
   assert.equal(meta.backend, "webgpu");
-  console.log(`✓ 包入口导出可用（backend=${meta.backend}）`);
+  console.log(`✓ 包入口导出可用（backend=${meta.backend}，Chrome ${browser.version()}）`);
+  console.log(`WebGPU adapter: ${JSON.stringify(meta.adapter)}`);
 
   const stepFixture = ["/samples/step/conical-surface.step"];
   const step = await page.evaluate((urls) => window.__pkg.load(urls), stepFixture);
