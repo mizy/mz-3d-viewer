@@ -36,6 +36,7 @@ jobs:
       - run: pnpm typecheck
       - run: pnpm build:pkg
       - run: pnpm verify:package
+        timeout-minutes: 3
       - id: package
         run: node scripts/release-package.mjs check
       - if: github.repository == 'mizy/mz-3d-viewer' && github.event_name != 'pull_request' && github.ref == 'refs/heads/main' && steps.package.outputs.version != ''

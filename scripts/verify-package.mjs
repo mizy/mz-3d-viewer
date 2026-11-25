@@ -10,6 +10,7 @@ import { createServer } from "node:http";
 import { readFile, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import { setTimeout as delay } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
 import { chromium } from "playwright";
 
@@ -52,7 +53,10 @@ const server = createServer(async (request, response) => {
 await new Promise((resolve) => server.listen(port, "127.0.0.1", resolve));
 
 const gpuArgs = ["--enable-unsafe-webgpu"];
-if (process.platform === "linux") gpuArgs.push("--use-webgpu-adapter=swiftshader", "--disable-vulkan-surface");
+if (process.platform === "linux") {
+  gpuArgs.push("--enable-features=Vulkan", "--use-angle=vulkan", "--use-vulkan=swiftshader",
+    "--use-webgpu-adapter=swiftshader", "--disable-vulkan-surface");
+}
 if (process.platform === "darwin") gpuArgs.push("--use-angle=metal");
 const browser = await chromium.launch({ channel: "chrome", args: gpuArgs });
 const page = await browser.newPage({ viewport: { width: 1100, height: 760 } });
@@ -66,6 +70,20 @@ page.on("console", (message) => {
   // A 404 already arrives through the response listener with its URL attached.
   if (message.type() === "error" && !message.text().includes("Failed to load resource")) errors.push(message.text());
 });
+
+async function checkInPage(label, evaluate, input) {
+  const deadline = new AbortController();
+  try {
+    return await Promise.race([
+      page.evaluate(evaluate, input),
+      delay(30000, undefined, { signal: deadline.signal }).then(() => {
+        throw new Error(`${label} timed out. Browser errors: ${errors.join(" | ")}`);
+      })
+    ]);
+  } finally {
+    deadline.abort();
+  }
+}
 
 try {
   await page.goto(`${base}/scripts/package-demo.html`, { waitUntil: "load" });
@@ -96,19 +114,20 @@ try {
   assert.equal(headless.mmPerUnit, null, "STL declares no unit, and the package says so");
   assert(headless.meshes > 0, "headless parse returned geometry");
   console.log(`✓ 无渲染器的 parseModel 路径（${headless.meshes} 个网格，单位未知）`);
-  const gltf = await page.evaluate(() => window.__pkg.parseOnly("/samples/gltf/Duck.glb"));
+  const gltf = await checkInPage("Headless GLB parsing", () => window.__pkg.parseOnly("/samples/gltf/Duck.glb"));
   assert.equal(gltf.format, "gltf");
   assert.equal(gltf.warnings, 0, "headless glTF can check compressed texture support without a renderer");
   assert(gltf.meshes > 0);
+  console.log("✓ 无渲染器的 glTF 解析");
 
-  // Frame the STEP model and make sure the canvas actually has pixels.
-  const painted = await page.evaluate(async () => {
-    const url = await window.__pkg.viewer.stage.captureNextFrame();
-    const image = await new Promise((resolve) => {
-      const img = new Image();
-      img.onload = () => resolve(img);
-      img.src = url;
-    });
+  // Read the composited preview to check rendered pixels, including on software WebGPU runners.
+  const screenshot = await page.locator("#view").screenshot({
+    path: path.join(tmpdir(), "mz-package-demo.png"), timeout: 30000
+  });
+  const painted = await checkInPage("Rendered canvas", async (source) => {
+    const image = new Image();
+    image.src = source;
+    await image.decode();
     const canvas = document.createElement("canvas");
     canvas.width = 64;
     canvas.height = 48;
@@ -120,20 +139,19 @@ try {
       if (data[i] + data[i + 1] + data[i + 2] > 120) bright += 1;
     }
     return { bright, style: window.__pkg.style(), edges: window.__pkg.edges() };
-  });
+  }, `data:image/png;base64,${screenshot.toString("base64")}`);
   assert(painted.bright > 20, `模型应当被渲染出来（亮像素 ${painted.bright}）`);
   assert.equal(painted.style, "edges", "默认带边线显示");
   assert.equal(painted.edges, true, "首次加载会生成边线");
-  await page.screenshot({ path: path.join(tmpdir(), "mz-package-demo.png") });
   console.log(`✓ 渲染出画面（亮像素 ${painted.bright}，显示模式 ${painted.style}，边线 ${painted.edges}）`);
 
-  const pick = await page.evaluate(async () => {
+  const pick = await checkInPage("CAD face and edge picking", async () => {
     const { viewer, load } = window.__pkg;
     viewer.clear();
     await load(["/samples/step/cube-10x10.stp"]);
     const { stage } = viewer;
     stage.setStandardView("front", false);
-    await stage.captureNextFrame();
+    await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
     const rect = document.getElementById("view").getBoundingClientRect();
     const hit = await stage.pick(rect.left + rect.width / 2, rect.top + rect.height / 2, { exact: true });
     const { min, max } = stage.active.box;
