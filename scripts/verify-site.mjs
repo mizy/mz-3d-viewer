@@ -235,7 +235,7 @@ if (remoteUrl === null) {
 }
 await boot();
 check("启动：WebGPU 后端", (await page.textContent("#backendBadge")) === "WebGPU", await page.textContent("#backendBadge"));
-check("启动：GPU 适配器可用", (await page.evaluate(async () => (await navigator.gpu?.requestAdapter()) !== null)) === true);
+check("启动：GPU 适配器可用", (await page.evaluate(async () => Boolean(await navigator.gpu?.requestAdapter()))) === true);
 const buildStamp = (await page.textContent("#buildStamp")).trim();
 const metaBuild = await page.getAttribute('meta[name="x-build"]', "content");
 // Local runs also pin the stamp to the freshly built dist/index.html; remote runs can only
@@ -536,7 +536,7 @@ await cdp.send("Network.clearBrowserCache");
 await offlineContext.setOffline(true);
 await boot(siteUrl, 20000).catch((error) => console.log(`   (离线重载警告: ${error.message})`));
 const offlineBadge = await page.textContent("#backendBadge").catch(() => "离线且外壳未缓存");
-check("清空 HTTP 缓存后断网重载仍能启动（外壳确实来自 SW）", offlineBadge === "WebGPU" || offlineBadge === "WebGL2（回退）", String(offlineBadge));
+check("清空 HTTP 缓存后断网重载仍能启动（外壳确实来自 SW）", offlineBadge === "WebGPU", String(offlineBadge));
 
 const offlineStl = await loadSample([sample.stl]).catch(() => null);
 check("断网打开 STL", offlineStl !== null && offlineStl.models.length === 1, offlineStl === null ? "失败" : `tri=${offlineStl.models[0].triangles}`);
@@ -548,19 +548,31 @@ check("断网打开 STEP（CAD 引擎来自 CAD 缓存）",
   offlineStep === null ? "失败" : `tri=${offlineStep.models[0]?.triangles} toast=${((await page.textContent("#toast")) ?? "").slice(0, 60)}`);
 await offlineContext.setOffline(false);
 
-// ---------------------------------------------------------------- 6. WebGL2 fallback
+// ---------------------------------------------------------------- 6. WebGPU startup failure
 
-// Reset first: the offline phase above deliberately produces network errors.
-consoleErrors.length = 0;
-pageErrors.length = 0;
-await boot(`${siteUrl}?webgl=1`);
-const fallbackBadge = await page.textContent("#backendBadge");
-const fallbackSummary = await loadSample([sample.stl]);
-const fallbackFrame = await signature();
-const fallbackDiff = diffRatio(fallbackFrame, await baselineFrame());
-check("?webgl=1 走 WebGL2 回退后端并渲染", fallbackBadge === "WebGL2（回退）" && fallbackDiff > 0.05,
-  `${fallbackBadge} 模型占画面 ${(fallbackDiff * 100).toFixed(1)}% tri=${fallbackSummary.models[0]?.triangles}`);
-check("回退路径无控制台错误", consoleErrors.length === 0 && pageErrors.length === 0, [...consoleErrors, ...pageErrors].slice(0, 3).join(" | "));
+const unsupported = await browser.newPage({ serviceWorkers: "block" });
+const startupErrors = [];
+unsupported.on("pageerror", (error) => startupErrors.push(error.message));
+await unsupported.addInitScript(() => {
+  const gpu = location.search.includes("missing-gpu") ? undefined : { requestAdapter: async () => null };
+  Object.defineProperty(navigator, "gpu", { value: gpu });
+  window.webglContextsRequested = 0;
+  const getContext = HTMLCanvasElement.prototype.getContext;
+  HTMLCanvasElement.prototype.getContext = function (name, ...args) {
+    if (name.startsWith("webgl")) window.webglContextsRequested++;
+    return getContext.call(this, name, ...args);
+  };
+});
+for (const scenario of ["missing-gpu", "missing-adapter"]) {
+  const url = new URL(siteUrl);
+  url.searchParams.set(scenario, "1");
+  await unsupported.goto(url.href);
+  await unsupported.locator("#webgpuUnavailable").waitFor({ state: "visible" });
+  check(`WebGPU 无法启动时显示提示（${scenario}）`,
+    await unsupported.isHidden("#app") && startupErrors.length === 0 &&
+    await unsupported.evaluate(() => window.webglContextsRequested === 0), startupErrors.join(" | "));
+}
+await unsupported.close();
 
 // ---------------------------------------------------------------- 7. narrow screen
 

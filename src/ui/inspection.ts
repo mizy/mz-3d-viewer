@@ -1,8 +1,9 @@
 import { convertLength, type MeasurementUnit, type Stage } from "../viewer/stage";
 import type { Object3D, Vector3 } from "three/webgpu";
-import type { SurfaceHit } from "../viewer/inspection/pickSurface";
+import type { SurfaceHit } from "../viewer/picking/surfaceHit";
 import { measurePoints, scaleForPixels } from "../viewer/inspection/measurement";
 import { createInspectionHover } from "./inspectionHover";
+import { bindCanvasClick } from "./canvasSelection";
 
 /** @entry Wire canvas picking, measurement annotations and the orthographic scale. */
 export function createInspection(
@@ -24,7 +25,6 @@ export function createInspection(
   const format = new Intl.NumberFormat("zh-CN", { maximumSignificantDigits: 5 });
   const anchors: (SurfaceHit & { localPoint: Vector3 })[] = [];
   let modelId: string | null = null;
-  let pointer: { id: number; x: number; y: number } | null = null;
 
   function showMeasurement(open: boolean): void {
     if (open) clearHover();
@@ -112,27 +112,17 @@ export function createInspection(
     if (event.key === "Escape" && !panel.hidden) showMeasurement(false);
   });
 
-  canvas.addEventListener("pointerdown", (event) => {
-    pointer = event.isPrimary && event.button === 0 ? { id: event.pointerId, x: event.clientX, y: event.clientY } : null;
-  });
-  canvas.addEventListener("pointermove", (event) => {
-    if (pointer?.id === event.pointerId && Math.hypot(event.clientX - pointer.x, event.clientY - pointer.y) > 5) pointer = null;
-  });
-  canvas.addEventListener("pointercancel", () => { pointer = null; });
-  canvas.addEventListener("pointerup", (event) => { void selectAt(event); });
+  bindCanvasClick(canvas, selectAt);
 
   async function selectAt(event: PointerEvent): Promise<void> {
-    if (pointer?.id !== event.pointerId) return;
-    const moved = Math.hypot(event.clientX - pointer.x, event.clientY - pointer.y) > 5;
-    pointer = null;
     const activeId = stage.active?.id ?? null;
-    if (moved || activeId === null) return;
+    if (activeId === null) return;
     const measuring = !panel.hidden;
     if (measuring && anchors.length === (mode.value === "distance" ? 2 : 3)) return;
     // The pick is asynchronous: the model can be closed or replaced while the GPU answers.
     // Measuring needs the exact surface point; plain selection only needs the part.
     const hit = await stage.pick(event.clientX, event.clientY, {
-      snap: measuring && snap.checked, exact: measuring
+      snap: measuring && snap.checked, exact: measuring, inspect: !measuring
     });
     if (stage.active?.id !== activeId) return;
     if (measuring) {
@@ -144,8 +134,7 @@ export function createInspection(
       anchors.push({ ...hit, localPoint: point });
       render();
     } else {
-      if (hit !== null && activeId !== hit.modelId) stage.setActive(hit.modelId);
-      stage.selectPart(hit === null || hit.partIndex < 0 ? null : hit.partIndex);
+      stage.selectHit(hit);
       onSelect();
     }
   }

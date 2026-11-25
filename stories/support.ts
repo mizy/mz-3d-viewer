@@ -1,4 +1,4 @@
-import { useEffect } from "storybook/preview-api";
+import { useEffect, useMemo } from "storybook/preview-api";
 import { createModelViewer, type ModelViewer, type ViewerOptions } from "../src/lib";
 import type { ParsedModel } from "../src/loaders/types";
 
@@ -10,6 +10,7 @@ export const SAMPLES = {
   glb: "gltf/Duck.glb",
   threeMf: "3mf/cube-10x10.3mf",
   step: "step/cube-10x10.stp",
+  stepCone: "step/conical-surface.step",
   stepAssembly: "step-sample.stp",
   iges: "iges/cube-10x10.igs",
   brep: "brep/as1_pe_203.brep"
@@ -18,12 +19,21 @@ export const SAMPLES = {
 /** The mounted node itself, with the canvas and status helpers attached for stories. */
 export type ViewerUi = HTMLDivElement & Readonly<{
   canvas: HTMLCanvasElement;
+  setTitle: (text: string) => void;
   setStatus: (text: string) => void;
   setInfo: (text: string) => void;
   setBackend: (text: string) => void;
 }>;
 
-export type ViewerSetup = (viewer: ModelViewer, ui: ViewerUi) => Promise<void> | void;
+type ViewerSetup = (viewer: ModelViewer, ui: ViewerUi, signal: AbortSignal) => Promise<void> | void;
+type ViewerStoryOptions = Readonly<{
+  /** Change this only for model or import settings that require remounting the canvas. */
+  key?: string;
+  setup: ViewerSetup;
+  update?: ViewerSetup;
+  create?: typeof createModelViewer;
+  viewerOptions?: ViewerOptions;
+}>;
 
 export function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
@@ -33,8 +43,8 @@ export function sampleUrl(path: string): string {
   return `/samples/${path}`;
 }
 
-export async function fetchSample(path: string): Promise<File> {
-  const response = await fetch(sampleUrl(path));
+export async function fetchSample(path: string, signal?: AbortSignal): Promise<File> {
+  const response = await fetch(sampleUrl(path), { signal });
   if (!response.ok) throw new Error(`${path}: HTTP ${response.status}`);
   const blob = await response.blob();
   return new File([blob], path.split("/").pop() ?? path, { type: blob.type });
@@ -52,7 +62,7 @@ function element<K extends keyof HTMLElementTagNameMap>(
 }
 
 /** Dark, fixed-height shell so a canvas always has a measurable size inside Storybook. */
-export function createViewerUi(label: string, height = 480): ViewerUi {
+function createViewerUi(label: string, height = 480): ViewerUi {
   const root = element("div", {
     background: "#0b1016", border: "1px solid #253444", borderRadius: "10px",
     color: "#dbe7f2", fontFamily: "system-ui, sans-serif", overflow: "hidden", width: "100%"
@@ -70,42 +80,60 @@ export function createViewerUi(label: string, height = 480): ViewerUi {
   root.append(bar, canvas, status, info);
   return Object.assign(root, {
     canvas,
+    setTitle: (text: string) => { title.textContent = text; },
     setStatus: (text: string) => { status.textContent = text; },
     setInfo: (text: string) => { info.textContent = text; },
     setBackend: (text: string) => { backend.textContent = `backend: ${text}`; }
   });
 }
 
-/**
- * @entry Creates a viewer for a story and disposes it when Storybook remounts the story.
- * Async work started after unmount is dropped instead of touching a detached canvas.
- */
-export function useViewer(options: ViewerOptions, label: string, setup: ViewerSetup): ViewerUi {
-  const ui = createViewerUi(label);
+/** @entry Mount one viewer per sample and apply visual Controls to its existing stage. */
+export function useViewer(label: string, { key, setup, update, create = createModelViewer, viewerOptions }: ViewerStoryOptions): ViewerUi {
+  const session = useMemo(() => ({ ui: createViewerUi(label), ready: null as Promise<ModelViewer> | null }), [key]);
+  const { ui } = session;
+  ui.setTitle(label);
   useEffect(() => {
-    let cancelled = false;
+    const lifetime = new AbortController();
+    const { signal } = lifetime;
     let viewer: ModelViewer | null = null;
     ui.setStatus("初始化渲染器…");
-    void createModelViewer(ui.canvas, options)
-      .then(async (created) => {
-        if (cancelled) {
-          created.dispose();
-          return;
-        }
-        viewer = created;
-        ui.setBackend(created.backend);
-        await setup(created, ui);
-        if (!cancelled) ui.setStatus("就绪");
-      })
-      .catch((error: unknown) => {
-        if (!cancelled) ui.setStatus(`失败：${errorMessage(error)}`);
-      });
+    session.ready = create(ui.canvas, viewerOptions).then(async (created) => {
+      if (signal.aborted) {
+        created.dispose();
+        signal.throwIfAborted();
+      }
+      viewer = created;
+      ui.setBackend(created.backend);
+      await setup(created, ui, signal);
+      signal.throwIfAborted();
+      if (update === undefined) ui.setStatus("就绪");
+      return created;
+    });
+    void session.ready.catch((error: unknown) => showViewerError(ui, signal, error));
     return () => {
-      cancelled = true;
+      lifetime.abort();
       viewer?.dispose();
     };
-  }, [options.quality, options.forceWebGL, options.background, options.edges, setup]);
+  }, [session]);
+
+  useEffect(() => {
+    if (update === undefined) return;
+    const pending = new AbortController();
+    const { signal } = pending;
+    void session.ready?.then(async (viewer) => {
+      if (signal.aborted) return;
+      await update(viewer, ui, signal);
+      if (!signal.aborted) ui.setStatus("就绪");
+    }).catch((error: unknown) => showViewerError(ui, signal, error));
+    return () => pending.abort();
+  }, [session, update]);
   return ui;
+}
+
+function showViewerError(ui: ViewerUi, signal: AbortSignal, error: unknown): void {
+  if (!signal.aborted && !(error instanceof DOMException && error.name === "AbortError")) {
+    ui.setStatus(`失败：${errorMessage(error)}`);
+  }
 }
 
 /** Parsed-model summary shared by the rendering and package stories. */
@@ -113,22 +141,25 @@ export function describeModels(models: readonly ParsedModel[]): string {
   return models.map((model) => {
     let meshes = 0;
     let vertices = 0;
+    let triangles = 0;
     model.root.traverse((node) => {
-      const geometry = (node as { geometry?: { attributes?: { position?: { count: number } } } }).geometry;
+      const geometry = (node as { geometry?: { index?: { count: number } | null; attributes?: { position?: { count: number } } } }).geometry;
       if (geometry?.attributes?.position === undefined) return;
       meshes += 1;
       vertices += geometry.attributes.position.count;
+      triangles += Math.floor((geometry.index?.count ?? geometry.attributes.position.count) / 3);
     });
     const unit = model.sourceUnit.mmPerUnit;
-    return `${model.format} · ${meshes} mesh · ${vertices} 顶点 · ${unit === null ? "单位未知" : `${unit} mm/unit`}`
+    return `${model.format} · ${meshes} mesh · ${vertices} 顶点 · ${triangles} 三角形 · ${unit === null ? "单位未知" : `${unit} mm/unit`}`
       + (model.warnings.length > 0 ? `\n提示：${model.warnings.join("；")}` : "");
   }).join("\n");
 }
 
 /** Loads a committed sample through the public viewer API and displays its summary. */
-export async function loadSample(viewer: ModelViewer, path: string, ui: ViewerUi): Promise<ParsedModel[]> {
+export async function loadSample(viewer: ModelViewer, path: string, ui: ViewerUi, signal: AbortSignal): Promise<ParsedModel[]> {
   ui.setStatus(`载入 ${path}…`);
-  const models = await viewer.load(await fetchSample(path));
+  const models = await viewer.load(await fetchSample(path, signal), { signal });
+  signal.throwIfAborted();
   ui.setInfo(describeModels(models));
   return models;
 }

@@ -6,12 +6,13 @@
  * wasm are the three files next to this module (`occt/`). Nothing is uploaded anywhere.
  */
 export { configureCadAssets, type CadAssetOptions } from "../cadAssets";
+export { WebGPUUnavailableError } from "../renderer/createRenderer";
 
 export { ACCEPTED_EXTENSIONS, detectFormat } from "../loaders/openFiles";
 export { CAD_QUALITY_PRESETS, type CadQuality } from "../loaders/step";
 export type { LoadProgress, ModelFormat, ParsedModel, ProgressReporter } from "../loaders/types";
 export type { DisplayStyle, MaterialPreset } from "../viewer/appearance";
-export type { SectionCut, StandardView } from "../viewer/stage";
+export type { PickMode, SectionCut, StandardView } from "../viewer/stage";
 
 export { parseFiles, parseModel, type ParseOptions } from "./parse";
 export { createModelViewer, type ModelViewer, type ViewerOptions } from "./viewer";

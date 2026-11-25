@@ -1,38 +1,35 @@
 import * as THREE from "three/webgpu";
 
-/** Which GPU backend actually produced frames this session. */
-export type BackendKind = "webgpu" | "webgl2";
+// WebGPURenderer installs a fallback internally. Use its WebGPU backend and standard
+// node library directly, with the same renderer interface for the viewer and loaders.
+class ViewerRenderer extends THREE.Renderer {
+  override library = new THREE.StandardNodeLibrary();
+  readonly isWebGPURenderer = true;
 
-export type RendererHandle = {
-  renderer: THREE.WebGPURenderer;
-  backend: BackendKind;
-};
-
-/** `?webgl=1` forces the WebGL2 backend so the fallback path stays testable. */
-export function forceWebGLFromUrl(search: string): boolean {
-  return new URLSearchParams(search).get("webgl") === "1";
+  constructor(canvas: HTMLCanvasElement) {
+    const options = { canvas, antialias: true, alpha: false };
+    super(new THREE.WebGPUBackend(options), options);
+  }
 }
 
-/**
- * three's WebGPURenderer silently falls back to its WebGL2 backend when
- * `navigator.gpu` is missing. We report which backend ended up in use instead of
- * claiming "WebGPU" unconditionally.
- */
-export async function createRenderer(
-  canvas: HTMLCanvasElement,
-  forceWebGL: boolean
-): Promise<RendererHandle> {
-  const renderer = new THREE.WebGPURenderer({
-    canvas,
-    antialias: true,
-    forceWebGL,
-    alpha: false
-  });
+export class WebGPUUnavailableError extends Error {
+  constructor(cause?: unknown) {
+    super("WebGPU is unavailable. Use a WebGPU-capable browser with graphics acceleration enabled.", { cause });
+    this.name = "WebGPUUnavailableError";
+  }
+}
+
+/** @entry Create a viewer renderer using the WebGPU backend. */
+export async function createRenderer(canvas: HTMLCanvasElement): Promise<THREE.WebGPURenderer> {
+  if (globalThis.navigator?.gpu === undefined) throw new WebGPUUnavailableError();
+  const renderer = new ViewerRenderer(canvas);
   renderer.outputColorSpace = THREE.SRGBColorSpace;
   renderer.toneMapping = THREE.ACESFilmicToneMapping;
   renderer.toneMappingExposure = 1.15;
-  await renderer.init();
-
-  const backend = renderer.backend as unknown as { isWebGPUBackend?: boolean };
-  return { renderer, backend: backend.isWebGPUBackend === true ? "webgpu" : "webgl2" };
+  try {
+    await renderer.init();
+    return renderer;
+  } catch (error) {
+    throw new WebGPUUnavailableError(error);
+  }
 }

@@ -7,7 +7,10 @@ import type { CadQuality } from "../loaders/step";
  * Stand-in for a renderer when parsing headlessly. glTF only asks it whether compressed KTX2
  * textures are supported; answering "no" keeps the load going and surfaces a warning instead.
  */
-const NO_COMPRESSED_TEXTURES = { extensions: { has: () => false } } as unknown as THREE.WebGPURenderer;
+const NO_COMPRESSED_TEXTURES = {
+  isWebGPURenderer: true,
+  hasFeature: () => false
+} as unknown as THREE.WebGPURenderer;
 
 export type ParseOptions = Readonly<{
   /** Sibling files the model references: `.mtl`, `.bin`, textures. */

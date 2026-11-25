@@ -2,11 +2,13 @@ import * as THREE from "three/webgpu";
 import { ControllerHost, type ControllerKind } from "./controller";
 import { createStudioEnvironment } from "./environment";
 import { collectParts, explodeParts, type ExplodePart } from "./explode";
-import { createEdges } from "./edges/buildEdges";
+import { createEdges, edgeAt, sameEdge, type EdgeHit } from "./edges/buildEdges";
+import { EdgeHighlight } from "./edges/edgeHighlight";
+import type { CadFaceSpan } from "../loaders/cadFaces";
 import { disposeObject } from "./dispose";
 import type { ParsedModel } from "../loaders/types";
-import { createAppearance, applyAppearance, disposeAppearance, setMaterialPreset, type MaterialPreset, type ModelAppearance, type DisplayStyle, type SurfaceHover } from "./appearance";
-import { pickSurface, type SurfaceHit } from "./inspection/pickSurface";
+import { createAppearance, applyAppearance, disposeAppearance, setMaterialPreset, type MaterialPreset, type ModelAppearance, type DisplayStyle, type SurfaceHighlight } from "./appearance";
+import { resolveSurfaceHit, type SurfaceHit } from "./picking/surfaceHit";
 import { PivotGizmo } from "./pivotGizmo";
 import { PickPass } from "./picking/pickPass";
 import { PickScene } from "./picking/pickScene";
@@ -20,7 +22,8 @@ export type MeasurementUnit = "mm" | "cm" | "m" | "in";
 export type SectionAxis = "x" | "y" | "z";
 export type SectionCut = { axis: SectionAxis; ratio: number; reversed: boolean };
 /** `exact` resolves the 3D point too; hover only needs the part and the CAD face. */
-export type PickOptions = Readonly<{ snap?: boolean; exact?: boolean }>;
+export type PickOptions = Readonly<{ snap?: boolean; exact?: boolean; inspect?: boolean }>;
+export type PickMode = "face" | "body";
 
 export type ModelStats = {
   vertices: number;
@@ -45,6 +48,8 @@ export type ModelHandle = {
   parts: ExplodePart[];
   appearance: ModelAppearance;
   selectedPart: number | null;
+  selectedFace: CadFaceSpan | null;
+  selectedEdge: EdgeHit | null;
   explode: number;
   /** Null until this model first uses the explode control. */
   explodeTarget: number | null;
@@ -52,7 +57,7 @@ export type ModelHandle = {
 };
 
 export type EdgeProgress = (done: number, total: number) => void;
-type HoverTarget = SurfaceHover & Readonly<{ modelId: string }>;
+type HoverTarget = SurfaceHighlight & Readonly<{ modelId: string; edge: EdgeHit | null }>;
 
 const VIEW_DIRECTIONS: Record<StandardView, ViewDirection> = {
   front: [0, 0, 1],
@@ -79,7 +84,7 @@ export function convertLength(valueInMm: number, unit: MeasurementUnit): number 
 export type Projection = "perspective" | "orthographic";
 /** The viewer's vertical field of view; also converts between a perspective distance and an ortho zoom. */
 const PERSPECTIVE_FOV = 45;
-const _pickSize = new THREE.Vector2();
+export const DEFAULT_EDGE_WIDTH = 1;
 
 export class Stage {
   readonly renderer: THREE.WebGPURenderer;
@@ -107,6 +112,9 @@ export class Stage {
   private readonly models: ModelHandle[] = [];
   private activeId: string | null = null;
   private hoveredSurface: HoverTarget | null = null;
+  private interactionMode: PickMode = "face";
+  private readonly hoveredEdge = new EdgeHighlight(this.clippingGroup, 0xffb84d, 4);
+  private readonly selectedEdges = new Map<string, EdgeHighlight>();
   private displayStyle: DisplayStyle = "edges";
   private sectionCuts: readonly SectionCut[] = [];
   /** Crosshair on the point the next drag orbits around. */
@@ -211,6 +219,8 @@ export class Stage {
       parts: [],
       appearance: createAppearance(parsed.root, this.lighting.surfaceColor),
       selectedPart: null,
+      selectedFace: null,
+      selectedEdge: null,
       explode: 0,
       explodeTarget: null,
       explodeTransition: null
@@ -221,7 +231,7 @@ export class Stage {
     this.models.push(handle);
     this.setActive(handle.id);
     this.updateAppearance(handle);
-    this.rebuildPicking();
+    this.updatePickModels();
     return handle;
   }
 
@@ -249,7 +259,7 @@ export class Stage {
     handle.parts = collectParts(handle.root, handle.box);
     handle.explodeTransition = null;
     this.applyExplode(handle, explode);
-    this.rebuildPicking();
+    this.updatePickModels();
     this.fitToActive();
   }
 
@@ -260,7 +270,9 @@ export class Stage {
       return;
     }
     const handle = this.models[index];
-    if (this.hoveredSurface?.modelId === handleId) this.hoveredSurface = null;
+    if (this.hoveredSurface?.modelId === handleId) this.setHoveredSurface(null);
+    this.selectedEdges.get(handleId)?.dispose();
+    this.selectedEdges.delete(handleId);
     handle.edgeBuild?.abort.abort();
     this.clippingGroup.remove(handle.root);
     disposeAppearance(handle.appearance);
@@ -270,7 +282,7 @@ export class Stage {
       disposeObject(handle.edges);
     }
     this.models.splice(index, 1);
-    this.rebuildPicking();
+    this.updatePickModels();
 
     if (this.activeId === handleId) {
       const next = this.models[Math.max(0, index - 1)];
@@ -299,6 +311,7 @@ export class Stage {
     if (handle.edges !== null) {
       handle.edges.visible = visible && this.displayStyle === "edges";
     }
+    this.syncSelectedEdge(handle);
   }
 
   isVisible(handleId: string): boolean {
@@ -306,8 +319,8 @@ export class Stage {
     return handle !== null && handle.root.visible;
   }
 
-  private rebuildPicking(): void {
-    this.pickScene.rebuild(this.models);
+  private updatePickModels(): void {
+    this.pickScene.setModels(this.models);
     this.pickVersion += 1;
   }
 
@@ -345,25 +358,77 @@ export class Stage {
     handle.stats.size = box.getSize(new THREE.Vector3());
   }
 
+  get pickMode(): PickMode {
+    return this.interactionMode;
+  }
+
+  setPickMode(mode: PickMode): void {
+    if (this.interactionMode === mode) return;
+    this.interactionMode = mode;
+    this.invalidatePick();
+    this.setHoveredSurface(null);
+    for (const model of this.models) this.setSelection(model, null, null, null);
+  }
+
   selectPart(index: number | null): void {
     const handle = this.active;
     if (!handle || (index !== null && !handle.parts[index])) return;
-    handle.selectedPart = index;
-    this.updateAppearance(handle);
+    this.setSelection(handle, index, null, null);
   }
 
-  /** @entry Preview the nearest visible face or mesh without changing selection. */
+  /** @entry Apply the current inspection mode to a GPU hit. */
+  selectHit(hit: SurfaceHit | null): void {
+    if (hit === null) {
+      this.selectPart(null);
+      return;
+    }
+    const model = this.find(hit.modelId);
+    if (model === null || !model.parts[hit.partIndex]) return;
+    if (this.activeId !== hit.modelId) this.setActive(hit.modelId);
+    const faceMode = this.pickMode === "face";
+    this.setSelection(model, hit.partIndex, faceMode ? hit.face : null, faceMode ? hit.edge : null);
+  }
+
+  private setSelection(model: ModelHandle, index: number | null, face: CadFaceSpan | null, edge: EdgeHit | null): void {
+    if (model.selectedPart === index && sameFace(model.selectedFace, face) && sameEdge(model.selectedEdge, edge)) return;
+    model.selectedPart = index;
+    model.selectedFace = face;
+    model.selectedEdge = edge;
+    this.updateAppearance(model);
+  }
+
+  /** @entry Preview the current pick target without changing selection. */
   setHoveredSurface(hit: SurfaceHit | null): void {
     const previous = this.hoveredSurface;
     const nextModel = hit === null ? null : this.find(hit.modelId);
+    const faceMode = this.pickMode === "face";
     const next: HoverTarget | null = hit !== null && nextModel !== null
-      ? { modelId: hit.modelId, mesh: hit.mesh, face: hit.face }
+      ? { modelId: hit.modelId, mesh: hit.mesh, face: faceMode ? hit.face : null, edge: faceMode ? hit.edge : null }
       : null;
-    if (previous?.mesh === next?.mesh && previous?.face === next?.face) return;
+    if (previous?.mesh === next?.mesh && sameFace(previous?.face ?? null, next?.face ?? null) &&
+        sameEdge(previous?.edge ?? null, next?.edge ?? null)) return;
     this.hoveredSurface = next;
     const previousModel = previous === null ? null : this.find(previous.modelId);
     if (previousModel !== null && previousModel !== nextModel) this.updateAppearance(previousModel);
     if (nextModel !== null) this.updateAppearance(nextModel);
+  }
+
+  private syncHoveredEdge(): void {
+    const hovered = this.hoveredSurface;
+    const edge = hovered?.edge ?? null;
+    const selected = hovered === null ? null : this.find(hovered.modelId)?.selectedEdge ?? null;
+    this.hoveredEdge.set(sameEdge(edge, selected) ? null : edge, this.displayStyle === "edges", this.edgeWidth);
+  }
+
+  private syncSelectedEdge(handle: ModelHandle): void {
+    const edge = handle.selectedEdge;
+    let overlay = this.selectedEdges.get(handle.id);
+    if (edge !== null && overlay === undefined) {
+      overlay = new EdgeHighlight(this.clippingGroup, 0x8ff6bc, 5);
+      this.selectedEdges.set(handle.id, overlay);
+    }
+    overlay?.set(edge, this.displayStyle === "edges" &&
+      handle.root.visible && edge?.line.visible === true, this.edgeWidth);
   }
 
   /** @entry Change the active model's material without changing its display mode. */
@@ -376,18 +441,16 @@ export class Stage {
 
   private updateAppearance(handle: ModelHandle): void {
     this.invalidate();
-    const selected = handle.selectedPart === null ? null : handle.parts[handle.selectedPart].mesh;
-    const hovered = this.hoveredSurface?.modelId === handle.id ? this.hoveredSurface : null;
+    const mesh = handle.selectedPart === null ? undefined : handle.parts[handle.selectedPart]?.mesh;
+    const selected = mesh === undefined || handle.selectedEdge !== null ? null : { mesh, face: handle.selectedFace };
+    const hover = this.hoveredSurface?.modelId === handle.id ? this.hoveredSurface : null;
+    const hovered = hover?.edge === null ? hover : null;
     applyAppearance(handle.appearance, this.displayStyle, selected, hovered);
+    this.syncSelectedEdge(handle);
+    this.syncHoveredEdge();
   }
 
-  /**
-   * @entry Resolve what the pointer is over.
-   *
-   * The GPU pick pass resolves the part (and the CAD face) from a cached id buffer, so hover does
-   * not walk triangles. `exact` additionally raycasts that single mesh for the hit point, which
-   * measurement needs and hover does not.
-   */
+  /** @entry Resolve part, CAD face and optional surface point from the WebGPU pick buffer. */
   async pick(clientX: number, clientY: number, options: PickOptions = {}): Promise<SurfaceHit | null> {
     const viewport = this.canvas.getBoundingClientRect();
     if (viewport.width < 1 || viewport.height < 1) return null;
@@ -395,40 +458,28 @@ export class Stage {
     const ndcY = 1 - (clientY - viewport.top) / viewport.height * 2;
     if (Math.abs(ndcX) > 1 || Math.abs(ndcY) > 1) return null;
 
-    const id = await this.pickPass.pick({
-      camera: this.camera, ndcX, ndcY, version: this.pickVersion,
-      prepare: () => this.pickScene.sync(this.clippingGroup.clippingPlanes)
+    const camera = this.camera;
+    const version = this.pickVersion;
+    const faceMode = options.inspect === true && this.pickMode === "face";
+    const sample = await this.pickPass.pick({
+      camera, ndcX, ndcY, version, snap: options.snap, triangle: faceMode && options.exact !== true,
+      edges: faceMode && this.displayStyle === "edges",
+      prepare: (edges) => this.pickScene.sync(this.clippingGroup.clippingPlanes, edges)
     });
-    const entity = this.pickScene.entity(id);
-    if (entity === null) return null;
-    if (options.exact !== true) {
-      return { ...entity, triangleIndex: null, localPoint: null };
-    }
-    const model = this.find(entity.modelId);
-    // Ray at the centre of the pixel the GPU picked: at a silhouette the pointer itself can sit a
-    // fraction of a pixel outside the triangle that coloured that pixel.
-    const point = this.pickPixelCentre(clientX, clientY, viewport);
-    const exact = model === null ? null : pickSurface({
-      models: [model], camera: this.camera, viewport, planes: this.clippingGroup.clippingPlanes,
-      clientX: point.x, clientY: point.y, snap: options.snap === true, only: entity.mesh
+    if (sample === null || version !== this.pickVersion || camera !== this.camera) return null;
+    const entity = this.pickScene.entity(sample.id);
+    if (entity === undefined) return null;
+    const line = sample.edgeIndex === null ? undefined : this.pickScene.edgeLine(sample.id);
+    const edge = line === undefined || sample.edgeIndex === null ? null : edgeAt(line, sample.edgeIndex);
+    return resolveSurfaceHit(entity, sample, {
+      camera, viewport, planes: this.clippingGroup.clippingPlanes, faceMode, edge,
+      exact: options.exact === true, snap: options.snap === true
     });
-    return exact ?? { ...entity, triangleIndex: null, localPoint: null };
-  }
-
-  /** Client-space centre of the drawing-buffer pixel `PickPass` reads for this pointer position. */
-  private pickPixelCentre(clientX: number, clientY: number, viewport: DOMRectReadOnly): { x: number; y: number } {
-    const size = this.renderer.getDrawingBufferSize(_pickSize);
-    const column = Math.min(size.x - 1, Math.max(0, Math.floor((clientX - viewport.left) / viewport.width * size.x)));
-    const row = Math.min(size.y - 1, Math.max(0, Math.floor((clientY - viewport.top) / viewport.height * size.y)));
-    return {
-      x: viewport.left + ((column + 0.5) / size.x) * viewport.width,
-      y: viewport.top + ((row + 0.5) / size.y) * viewport.height
-    };
   }
 
   /** @entry Make the surface point under a left press the point the next drag orbits around. */
   private async pivotFromPointer(clientX: number, clientY: number): Promise<void> {
-    const hit = await this.pick(clientX, clientY, { exact: true });
+    const hit = await this.pick(clientX, clientY, { exact: true, inspect: true });
     // Empty space goes back to orbiting the framed centre, like any viewer without a pivot.
     if (hit === null || hit.localPoint === null) {
       this.setPivot(null);
@@ -494,6 +545,7 @@ export class Stage {
       return mesh.visible;
     }).map(({ mesh }) => mesh.matrixWorld));
     for (const line of handle.edges.children) line.visible = visibleMatrices.has(line.matrix);
+    this.syncSelectedEdge(handle);
   }
 
   // ---------------------------------------------------------------- display style
@@ -507,7 +559,11 @@ export class Stage {
    * so it only happens when the user actually asks for that mode.
    */
   async setDisplayStyle(style: DisplayStyle, onEdgeProgress?: EdgeProgress): Promise<void> {
-    this.displayStyle = style;
+    if (this.displayStyle !== style) {
+      this.displayStyle = style;
+      this.setHoveredSurface(null);
+      this.invalidatePick();
+    }
     this.invalidate();
     // Apply every surface immediately, before awaiting any edge calculation.
     for (const handle of this.models) {
@@ -526,14 +582,17 @@ export class Stage {
       await this.ensureEdges(handle, onEdgeProgress);
       if (handle.edges !== null) {
         handle.edges.visible = handle.root.visible && this.displayStyle === "edges";
+        this.invalidatePick();
         this.invalidate();
       }
     }
   }
 
   setEdgeAngle(angleDeg: number): void {
+    if (this.hoveredSurface?.edge) this.setHoveredSurface(null);
     for (const handle of this.models) {
       handle.edgeBuild?.abort.abort();
+      if (handle.selectedEdge !== null) this.setSelection(handle, null, null, null);
       if (handle.edges !== null) {
         this.clippingGroup.remove(handle.edges);
         disposeObject(handle.edges);
@@ -542,12 +601,13 @@ export class Stage {
       }
     }
     this.currentEdgeAngle = angleDeg;
+    this.updatePickModels();
     this.invalidate();
   }
 
   private currentEdgeAngle = 30;
   /** Edge width in CSS pixels; the slider in the sidebar owns this. */
-  private edgeWidth = 2;
+  private edgeWidth = DEFAULT_EDGE_WIDTH;
 
   edgeAngle(): number {
     return this.currentEdgeAngle;
@@ -558,11 +618,13 @@ export class Stage {
     const next = THREE.MathUtils.clamp(width, 1, 4);
     if (next === this.edgeWidth) return;
     this.edgeWidth = next;
+    this.syncHoveredEdge();
     for (const handle of this.models) {
       for (const line of handle.edges?.children ?? []) {
         const material = (line as THREE.Mesh).material;
         if (material instanceof THREE.Line2NodeMaterial) material.linewidth = next;
       }
+      this.syncSelectedEdge(handle);
     }
     this.invalidate();
   }
@@ -583,6 +645,7 @@ export class Stage {
       handle.edgeAngleUsed = angle;
       this.clippingGroup.add(group);
       this.syncEdgeVisibility(handle);
+      this.invalidatePick();
       this.invalidate();
     }).catch((error: unknown) => {
       if (!abort.signal.aborted) throw error;
@@ -982,6 +1045,7 @@ export class Stage {
     this.onRender = null;
     this.environment.dispose();
     for (const handle of [...this.models]) this.removeModel(handle.id);
+    this.hoveredEdge.dispose();
     this.pickPass.dispose();
     this.pickScene.dispose();
     this.pivotGizmo.dispose();
@@ -989,6 +1053,10 @@ export class Stage {
     this.controls.dispose();
     this.renderer.dispose();
   }
+}
+
+function sameFace(first: CadFaceSpan | null, second: CadFaceSpan | null): boolean {
+  return first?.start === second?.start && first?.count === second?.count;
 }
 
 /**

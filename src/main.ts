@@ -1,7 +1,7 @@
 import { assetBase } from "./assetBase";
 import { configureCadAssets } from "./cadAssets";
 import { createApp } from "./ui/app";
-import { createRenderer, forceWebGLFromUrl } from "./renderer/createRenderer";
+import { createRenderer, WebGPUUnavailableError } from "./renderer/createRenderer";
 import { Stage } from "./viewer/stage";
 import { consumeLaunchQueue, registerServiceWorker } from "./pwa/register";
 
@@ -17,16 +17,19 @@ const canvas = must<HTMLCanvasElement>("view");
 canvas.dataset["assetBase"] = assetBase;
 configureCadAssets({ baseUrl: `${assetBase}wasm/occt/` });
 
-const forceWebGL = forceWebGLFromUrl(location.search);
-const { renderer, backend } = await createRenderer(canvas, forceWebGL);
-const stage = new Stage(renderer, canvas, must("pivotGizmo"));
-stage.resize();
+try {
+  const renderer = await createRenderer(canvas);
+  const stage = new Stage(renderer, canvas, must("pivotGizmo"));
+  stage.resize();
 
-const app = createApp(stage, backend, forceWebGL);
+  const app = createApp(stage);
+  const resizeObserver = new ResizeObserver(() => stage.resize());
+  resizeObserver.observe(canvas);
 
-const resizeObserver = new ResizeObserver(() => stage.resize());
-resizeObserver.observe(canvas);
-
-consumeLaunchQueue((files) => void app.openFiles(files), app.reportFileOpenError);
-
-registerServiceWorker((state) => app.setCadEngineState(state));
+  consumeLaunchQueue((files) => void app.openFiles(files), app.reportFileOpenError);
+  registerServiceWorker((state) => app.setCadEngineState(state));
+} catch (error) {
+  if (!(error instanceof WebGPUUnavailableError)) throw error;
+  must("app").hidden = true;
+  must("webgpuUnavailable").hidden = false;
+}

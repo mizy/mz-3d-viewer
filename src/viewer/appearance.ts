@@ -9,18 +9,18 @@ export const MATERIAL_PRESETS = {
 } as const;
 export type MaterialPreset = keyof typeof MATERIAL_PRESETS | "original";
 type SurfaceColor = THREE.MeshStandardNodeMaterial["colorNode"];
-export type SurfaceHover = Readonly<{ mesh: THREE.Mesh; face: CadFaceSpan | null }>;
+export type SurfaceHighlight = Readonly<{ mesh: THREE.Mesh; face: CadFaceSpan | null }>;
 
 type SurfaceEntry = { mesh: THREE.Mesh; material: THREE.Material | THREE.Material[] };
 
-/** What the meshes currently show, so a hover can undo only the mesh it touched. */
 type AppliedState = Readonly<{
   style: DisplayStyle;
   preset: MaterialPreset;
-  selected: THREE.Object3D | null;
-  hoveredMesh: THREE.Mesh | null;
-  face: CadFaceSpan | null;
+  selected: SurfaceHighlight | null;
+  hovered: SurfaceHighlight | null;
 }>;
+
+type DrawGroup = THREE.BufferGeometry["groups"][number];
 
 export type ModelAppearance = {
   surfaces: SurfaceEntry[];
@@ -30,6 +30,7 @@ export type ModelAppearance = {
   hover: THREE.MeshStandardNodeMaterial;
   hoverXray: THREE.MeshStandardNodeMaterial;
   hoveredGeometry: THREE.BufferGeometry | null;
+  originalGroups: Map<THREE.BufferGeometry, DrawGroup[]>;
   preset: MaterialPreset;
   override: { solid: THREE.MeshStandardNodeMaterial; xray: THREE.MeshStandardNodeMaterial } | null;
   applied: AppliedState | null;
@@ -74,6 +75,7 @@ export function createAppearance(root: THREE.Object3D, surfaceColor: SurfaceColo
     hover,
     hoverXray,
     hoveredGeometry: null,
+    originalGroups: new Map(),
     highlight: new THREE.MeshStandardMaterial({ color: 0xb7fbd8, emissive: 0x2c805c,
       emissiveIntensity: 0.5, roughness: 0.4, side: THREE.DoubleSide }),
     applied: null
@@ -114,59 +116,88 @@ function disposeMaterialOverride(appearance: ModelAppearance): void {
   appearance.override = null;
 }
 
-/**
- * @entry Material overrides are per mesh; shared imported materials retain their colors.
- *
- * Hover is the hot path now that the pointer is resolved on the GPU: moving between two meshes
- * reassigns two materials instead of walking every surface of the model. Selection, style and
- * preset changes still take the full pass, which is fine — they happen on clicks, not per move.
- */
+/** @entry Update only the affected mesh when a face highlight changes. */
 export function applyAppearance(
   appearance: ModelAppearance, style: DisplayStyle,
-  selected: THREE.Object3D | null, hovered: SurfaceHover | null
+  selected: SurfaceHighlight | null, hovered: SurfaceHighlight | null
 ): void {
   const previous = appearance.applied;
-  const hoveredMesh = hovered?.mesh ?? null;
-  const face = hovered?.face ?? null;
-  const structural = previous === null || previous.style !== style ||
-    previous.preset !== appearance.preset || previous.selected !== selected;
-
-  if (structural) {
-    clearFaceHover(appearance);
+  const all = previous === null || previous.style !== style || previous.preset !== appearance.preset;
+  appearance.applied = { style, preset: appearance.preset, selected, hovered };
+  appearance.hoveredGeometry = null;
+  if (all) {
     appearance.highlight.wireframe = style === "wireframe";
     appearance.hover.wireframe = style === "wireframe";
     if (appearance.override !== null) appearance.override.solid.wireframe = style === "wireframe";
-    for (const surface of appearance.surfaces) {
-      surface.mesh.material = materialFor(appearance, surface, style, selected, hovered);
+    for (const surface of appearance.surfaces) updateSurface(appearance, surface, style, selected, hovered);
+  } else {
+    const affected = new Set<THREE.Mesh>();
+    if (!sameSurface(previous.selected, selected)) {
+      addAffectedMeshes(affected, previous.selected);
+      addAffectedMeshes(affected, selected);
     }
-  } else if (previous.hoveredMesh !== hoveredMesh || previous.face !== face) {
-    clearFaceHover(appearance);
-    const previousSurface = previous.hoveredMesh === null ? undefined : appearance.byMesh.get(previous.hoveredMesh);
-    if (previousSurface !== undefined) {
-      previousSurface.mesh.material = materialFor(appearance, previousSurface, style, selected, null);
+    if (!sameSurface(previous.hovered, hovered)) {
+      addAffectedMeshes(affected, previous.hovered);
+      addAffectedMeshes(affected, hovered);
     }
-    if (hovered !== null) {
-      const surface = appearance.byMesh.get(hovered.mesh);
-      if (surface !== undefined) surface.mesh.material = materialFor(appearance, surface, style, selected, hovered);
+    for (const mesh of affected) {
+      const surface = appearance.byMesh.get(mesh);
+      if (surface) updateSurface(appearance, surface, style, selected, hovered);
     }
+    if (hovered?.face && appearance.originalGroups.has(hovered.mesh.geometry) &&
+        !sameSurface(selected, hovered)) appearance.hoveredGeometry = hovered.mesh.geometry;
   }
-  appearance.applied = { style, preset: appearance.preset, selected, hoveredMesh, face };
 }
 
-function materialFor(
-  appearance: ModelAppearance, surface: SurfaceEntry, style: DisplayStyle,
-  selected: THREE.Object3D | null, hovered: SurfaceHover | null
-): THREE.Material | THREE.Material[] {
-  if (isSelected(surface.mesh, selected)) return appearance.highlight;
-  const base = surfaceMaterial(appearance, surface.material, style);
-  if (hovered === null || hovered.mesh !== surface.mesh) return base;
-  const hoverMaterial = style === "xray" ? appearance.hoverXray : appearance.hover;
-  if (hovered.face !== null && !Array.isArray(base) && surface.mesh.geometry.groups.length === 0) {
-    splitFaceDraw(surface.mesh.geometry, hovered.face);
-    appearance.hoveredGeometry = surface.mesh.geometry;
-    return [base, hoverMaterial];
+function addAffectedMeshes(meshes: Set<THREE.Mesh>, target: SurfaceHighlight | null): void {
+  if (target === null) return;
+  if (target.face !== null) {
+    meshes.add(target.mesh);
+  } else {
+    target.mesh.traverse((node) => {
+      if (node instanceof THREE.Mesh) meshes.add(node);
+    });
   }
-  return hoverMaterial;
+}
+
+function sameSurface(first: SurfaceHighlight | null, second: SurfaceHighlight | null): boolean {
+  return first?.mesh === second?.mesh && first?.face?.start === second?.face?.start &&
+    first?.face?.count === second?.face?.count;
+}
+
+function updateSurface(
+  appearance: ModelAppearance, surface: SurfaceEntry, style: DisplayStyle,
+  selected: SurfaceHighlight | null, hovered: SurfaceHighlight | null
+): void {
+  const { mesh } = surface;
+  restoreGroups(appearance, mesh.geometry);
+  if (selected?.face === null && isSelected(mesh, selected.mesh)) {
+    mesh.material = appearance.highlight;
+    return;
+  }
+  const hoverMaterial = style === "xray" ? appearance.hoverXray : appearance.hover;
+  if (hovered?.face === null && isSelected(mesh, hovered.mesh)) {
+    mesh.material = hoverMaterial;
+    return;
+  }
+
+  const base = surfaceMaterial(appearance, surface.material, style);
+  const selectedFace = selected?.mesh === mesh ? selected.face : null;
+  const hoveredFace = hovered?.mesh === mesh && !sameSurface(selected, hovered) ? hovered.face : null;
+  if (!selectedFace && !hoveredFace) {
+    mesh.material = base;
+    return;
+  }
+
+  const materials = Array.isArray(base) ? [...base] : [base];
+  const spans: { face: CadFaceSpan; materialIndex: number }[] = [];
+  if (selectedFace) spans.push({ face: selectedFace, materialIndex: materials.push(appearance.highlight) - 1 });
+  if (hoveredFace) {
+    spans.push({ face: hoveredFace, materialIndex: materials.push(hoverMaterial) - 1 });
+    appearance.hoveredGeometry = mesh.geometry;
+  }
+  splitFaceDraw(appearance, mesh.geometry, spans, Array.isArray(base));
+  mesh.material = materials;
 }
 
 function isSelected(mesh: THREE.Mesh, selected: THREE.Object3D | null): boolean {
@@ -191,22 +222,41 @@ function surfaceMaterial(
     : appearance.xray.get(source)!;
 }
 
-/** Render the hovered CAD span using the original vertex/index buffers. */
-function splitFaceDraw(geometry: THREE.BufferGeometry, { start, count }: CadFaceSpan): void {
-  const end = start + count;
+/** Keep imported draw groups and reuse vertex/index buffers for the selected spans. */
+function splitFaceDraw(
+  appearance: ModelAppearance, geometry: THREE.BufferGeometry,
+  spans: { face: CadFaceSpan; materialIndex: number }[], multipleMaterials: boolean
+): void {
+  const original = geometry.groups;
+  appearance.originalGroups.set(geometry, original);
+  geometry.groups = [];
   const total = geometry.index?.count ?? geometry.getAttribute("position").count;
-  if (start > 0) geometry.addGroup(0, start, 0);
-  geometry.addGroup(start, count, 1);
-  if (end < total) geometry.addGroup(end, total - end, 0);
+  const groups = multipleMaterials ? original : [{ start: 0, count: total, materialIndex: 0 }];
+  spans.sort((a, b) => a.face.start - b.face.start);
+  for (const group of groups) {
+    let cursor = group.start;
+    const end = group.start + group.count;
+    for (const { face, materialIndex } of spans) {
+      const start = Math.max(cursor, face.start);
+      const stop = Math.min(end, face.start + face.count);
+      if (start >= stop) continue;
+      if (start > cursor) geometry.addGroup(cursor, start - cursor, group.materialIndex);
+      geometry.addGroup(start, stop - start, materialIndex);
+      cursor = stop;
+    }
+    if (cursor < end) geometry.addGroup(cursor, end - cursor, group.materialIndex);
+  }
 }
 
-function clearFaceHover(appearance: ModelAppearance): void {
-  appearance.hoveredGeometry?.clearGroups();
-  appearance.hoveredGeometry = null;
+function restoreGroups(appearance: ModelAppearance, geometry: THREE.BufferGeometry): void {
+  const original = appearance.originalGroups.get(geometry);
+  if (original === undefined) return;
+  geometry.groups = original;
+  appearance.originalGroups.delete(geometry);
 }
 
 export function disposeAppearance(appearance: ModelAppearance): void {
-  clearFaceHover(appearance);
+  for (const geometry of appearance.originalGroups.keys()) restoreGroups(appearance, geometry);
   for (const surface of appearance.surfaces) surface.mesh.material = surface.material;
   disposeMaterialOverride(appearance);
   for (const material of appearance.xray.values()) material.dispose();

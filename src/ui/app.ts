@@ -5,7 +5,7 @@ import { createInspection } from "./inspection";
 import { createContextMenu } from "./contextMenu";
 import { createNavCube } from "./navCube";
 import { createDemo } from "../viewer/demo";
-import { convertLength } from "../viewer/stage";
+import { convertLength, DEFAULT_EDGE_WIDTH } from "../viewer/stage";
 import type { MaterialPreset } from "../viewer/appearance";
 import { ACCEPTED_EXTENSIONS, parseOne, primaryFiles } from "../loaders/openFiles";
 import { CAD_QUALITY_PRESETS, type CadQuality } from "../loaders/step";
@@ -15,7 +15,6 @@ import { disposeObject } from "../viewer/dispose";
 import type { ViewerTestHooks } from "./testHooks";
 import { describeWarmState, type CadEngineWarmState } from "../pwa/cadEngineWarm";
 
-type Backend = "webgpu" | "webgl2";
 type ToastKind = "info" | "warn" | "error";
 
 const UNIT_LABEL: Record<MeasurementUnit, string> = { mm: "mm", cm: "cm", m: "m", in: "in" };
@@ -46,7 +45,7 @@ export type AppHandle = {
   reportFileOpenError: (error: unknown) => void;
 };
 
-export function createApp(stage: Stage, backend: Backend, forceWebGL: boolean): AppHandle {
+export function createApp(stage: Stage): AppHandle {
   const canvas = el<HTMLCanvasElement>("view");
   const backendBadge = el<HTMLSpanElement>("backendBadge");
   const openBtn = el<HTMLButtonElement>("openBtn");
@@ -58,6 +57,12 @@ export function createApp(stage: Stage, backend: Backend, forceWebGL: boolean): 
   const explodePanel = el<HTMLElement>("explodePanel");
   const explodeBtn = el<HTMLButtonElement>("explodeBtn");
   const styleBtn = el<HTMLButtonElement>("styleBtn");
+  const pickMode = el<HTMLSelectElement>("pickMode");
+  pickMode.value = stage.pickMode;
+  pickMode.addEventListener("change", () => {
+    stage.setPickMode(pickMode.value === "body" ? "body" : "face");
+    renderModelList();
+  });
   const displayBtn = el<HTMLButtonElement>("displayBtn");
   const displayMenu = el<HTMLElement>("displayMenu");
   const materialBtn = el<HTMLButtonElement>("materialBtn");
@@ -147,11 +152,8 @@ export function createApp(stage: Stage, backend: Backend, forceWebGL: boolean): 
 
   const build = document.querySelector<HTMLMetaElement>('meta[name="x-build"]')?.content ?? "dev";
   buildStamp.textContent = `build ${build}`;
-  backendBadge.textContent = backend === "webgpu" ? "WebGPU" : "WebGL2（回退）";
-  backendBadge.className = `badge ${backend === "webgpu" ? "badge-ok" : "badge-fallback"}`;
-  if (forceWebGL) {
-    backendBadge.title = "已通过 ?webgl=1 强制走 WebGL2 后端";
-  }
+  backendBadge.textContent = "WebGPU";
+  backendBadge.classList.add("badge-ok");
 
   // ------------------------------------------------------------------ toasts & progress
 
@@ -219,6 +221,7 @@ export function createApp(stage: Stage, backend: Backend, forceWebGL: boolean): 
     explodeBtn.classList.toggle("active", (active?.explodeTarget ?? 0) > 0);
     styleBtn.disabled = active === null;
     displayBtn.disabled = active === null;
+    el<HTMLElement>("pickModeControl").hidden = active === null;
     renderMaterialControls();
     renderInspection();
     fitAllBtn.disabled = !stage.modelList.some(({ root }) => root.visible);
@@ -812,7 +815,7 @@ export function createApp(stage: Stage, backend: Backend, forceWebGL: boolean): 
 
   const hooks: ViewerTestHooks = {
     stage,
-    backend,
+    backend: "webgpu",
     capture: () => stage.captureNextFrame(),
     cadEngine: () => cadEngineState,
     setController: (kind) => applyController(kind, false),
@@ -834,7 +837,7 @@ export function createApp(stage: Stage, backend: Backend, forceWebGL: boolean): 
       sectionEnabled: sectionToggle.checked,
       controller: stage.controllerKind,
       projection: stage.projectionKind,
-      backend,
+      backend: "webgpu",
       build,
       cadEngineStatus: cadEngineState.status
     })
@@ -860,8 +863,6 @@ function stripExtension(name: string): string {
 const CONTROLLER_STORAGE_KEY = "mz-3d-viewer.controller";
 const PROJECTION_STORAGE_KEY = "mz-3d-viewer.projection";
 const EDGE_WIDTH_STORAGE_KEY = "mz-3d-viewer.edge-width";
-/** Must match the range input's default in index.html and `Stage`'s own default. */
-const DEFAULT_EDGE_WIDTH = 2;
 
 function readStoredEdgeWidth(): number {
   const width = Number(readPreference(EDGE_WIDTH_STORAGE_KEY));

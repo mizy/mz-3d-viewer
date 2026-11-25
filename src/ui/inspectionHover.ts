@@ -8,7 +8,7 @@ import type { Stage } from "../viewer/stage";
  * flight never lets older positions queue up behind it.
  */
 export function createInspectionHover(
-  stage: Stage, canvas: HTMLCanvasElement, canHover: () => boolean
+  stage: Stage, canvas: HTMLCanvasElement, canHover: () => boolean, signal?: AbortSignal
 ): () => void {
   let generation = 0;
   let pending: { x: number; y: number } | null = null;
@@ -23,15 +23,15 @@ export function createInspectionHover(
   async function drain(): Promise<void> {
     if (running) return;
     running = true;
-    const start = generation;
     try {
-      while (pending !== null && generation === start) {
+      while (pending !== null) {
+        const start = generation;
         const point = pending;
         pending = null;
         const hit = canHover() && document.elementFromPoint(point.x, point.y) === canvas
-          ? await stage.pick(point.x, point.y)
+          ? await stage.pick(point.x, point.y, { inspect: true })
           : null;
-        if (generation !== start) return;
+        if (generation !== start || pending !== null) continue;
         stage.setHoveredSurface(hit);
       }
     } finally {
@@ -46,11 +46,12 @@ export function createInspectionHover(
     }
     pending = { x: clientX, y: clientY };
     void drain();
-  });
+  }, { signal });
   for (const event of ["pointerleave", "pointerdown", "pointercancel", "wheel"]) {
-    canvas.addEventListener(event, clear, { passive: true });
+    canvas.addEventListener(event, clear, { passive: true, signal });
   }
-  window.addEventListener("blur", clear);
+  window.addEventListener("blur", clear, { signal });
   stage.controls.addEventListener("change", clear);
+  signal?.addEventListener("abort", clear, { once: true });
   return clear;
 }

@@ -23,6 +23,6 @@
   release them at their owner's disposal boundary.
 - Measure the changed path using representative files. Use `pnpm typecheck`,
   `pnpm build`, and the relevant browser checks from the README. For changes
-  to rendering or input, check WebGPU and the WebGL2 fallback and inspect
-  console and network errors. Check idle work and resource lifetime when
+  to rendering or input, check WebGPU and inspect console and network errors.
+  For startup changes, also check the unavailable-adapter state. Check idle work and resource lifetime when
   changing scheduling or shared geometry.

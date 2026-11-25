@@ -1,6 +1,6 @@
 # mz-3d-viewer
 
-WebGPU-first PWA for looking at 3D models: **STL, OBJ, glTF/GLB, 3MF, STEP/IGES/BREP**.
+WebGPU PWA for looking at 3D models: **STL, OBJ, glTF/GLB, 3MF, STEP/IGES/BREP**.
 
 Online: <https://mizy.github.io/mz-3d-viewer/>
 
@@ -14,6 +14,7 @@ pnpm install
 pnpm dev              # http://localhost:8899
 pnpm storybook        # Storybook at http://localhost:6006 (rendering + package API stories)
 pnpm build:storybook  # static Storybook into storybook-static/
+pnpm verify:storybook # exercise Controls against the running Storybook
 pnpm build            # vite build + dist/sw.js (precache manifest + build hash)
 pnpm serve:dist       # serve dist/ exactly like GitHub Pages (static, cache-control: max-age=600)
 pnpm build:pkg        # library build: dist-lib/ (ESM + .d.ts + occt/ assets)
@@ -37,8 +38,8 @@ sub-path (`/mz-3d-viewer/`) so the GitHub Pages layout is what gets tested. Flag
 package ship. Sample files are served from `/samples/`, the OpenCascade worker/wasm from `/occt/`,
 so no build step is needed for the rendering and API stories:
 
-- **Viewer/Rendering** — `createModelViewer` on real sample files (`EmbeddedViewer`,
-  `WebGL2Fallback`), then display styles, section cuts, explode, projection/views, grid/environment
+- **Viewer/Rendering** — `createModelViewer` on real sample files, then display styles, section
+  cuts, explode, projection/views, grid/environment
   and material presets on the procedural assembly. The badge shows the backend that actually started.
 - **Package/API** — `detectFormat` / `ACCEPTED_EXTENSIONS` / exports table, `parseModel` with progress
   and quality presets, `parseFiles` with OBJ companion files, `configureCadAssets`, and aborting a
@@ -49,7 +50,7 @@ so no build step is needed for the rendering and API stories:
   prints the build hint instead of breaking the preview.
 
 Stories create and dispose a real renderer on mount/unmount; controls re-create the viewer with the
-new arguments. Chromium without WebGPU still works through the WebGL2 fallback.
+new arguments. The viewer requires a working WebGPU adapter.
 
 ## Use it as a package
 
@@ -63,7 +64,8 @@ pnpm add @mizy/mz-3d-viewer
 
 The same source ships two ways: the app (`pnpm build` → `dist/`) and a library (`pnpm build:pkg` →
 `dist-lib/`). The library exports the parsers, an embeddable viewer, and the switch for where the
-OpenCascade assets live.
+OpenCascade assets live. `createModelViewer` rejects with `WebGPUUnavailableError` if the renderer
+cannot start. The parsing APIs do not initialize a renderer.
 
 ```ts
 import { configureCadAssets, createModelViewer } from "@mizy/mz-3d-viewer";
@@ -121,18 +123,18 @@ On phones, Scene Settings opens as a bottom sheet (swipe the heading down to clo
 - **Explode:** first opening animates to 50%. Slider changes and fully separated / reassemble use a 400ms transition with matching camera framing; reopening preserves the chosen value. Offsets belong to the active model, edge lines follow the parts, and dimensions retain their assembled values.
 - **Display and material:** models open with Edges enabled. The dock's 边线 button toggles edges on and off; the 显示 button opens the four CAD modes (实体 / 边线 / 线框 / 透射), which are also in the right-click menu and cycle with `w`. Edges are
   screen-space quads (`Line2NodeMaterial`), so the width slider under 边线粗细 is real CSS pixels
-  (2 by default, retina-aware: the material divides by `viewport / pixelRatio` itself) rather than
+  (1 by default, retina-aware: the material divides by `viewport / pixelRatio` itself) rather than
   the one-pixel hairline the GPU gives `LineBasicMaterial`; a negative polygon offset puts them in
   front of the faces they belong to instead of fighting with them. Models open in neutral gray with directional lighting and a small
   depth cue in the surface shader. Material presets apply to the active model. Choose Original to see
   the file's colors and textures.
-- **Picking and framing:** hover previews the nearest visible CAD face in amber. A dedicated pick
-  pass renders the scene into an id buffer once per camera or scene change; each pointer move then
-  reads one pixel of it, so hover costs a fraction of a millisecond instead of a full triangle
-  raycast. Clicking or measuring reuses that id and raycasts only the mesh it named, which keeps the
-  measured point exact. Formats without CAD faces highlight the mesh under the pointer. Click to
-  select a part or double-click to frame it. Choose Fit All in the workspace or press Shift+F to
-  frame the visible scene.
+- **Picking and framing:** the picker next to the display controls switches between **面 / 边**
+  and **体**. Face mode highlights one CAD face (one triangle on polygonal models) or a visible
+  edge. Body mode highlights the whole part. Hover is amber, selection is green, and clicking
+  empty space clears the selection. Edge picking is available while the edge overlay is visible.
+  CAD boundaries are grouped by their adjacent faces; the crease-angle control applies to
+  polygonal edge extraction. GPU IDs and view depth drive selection, rotation and measurement.
+  Double-click to frame the selected part, or press Shift+F to frame the visible scene.
 - **Measurement:** use Measure for two points (distance) or three points (angle at the middle point). Enable vertex snapping to pick nearby mesh vertices. Distances follow the display unit when the model's scale is known. Orthographic views then show a scale bar.
 - **Section:** enable one or more of X, Y and Z. Set each plane's position and reverse its kept side independently.
 - **Background:** toggle a light background in the workspace when inspecting dark models.
@@ -160,7 +162,7 @@ the dock and the body to prove the browser default is cancelled everywhere.
 | Path | Owns |
 |------|------|
 | `src/main.ts` | boot order: renderer → stage → UI → PWA registration |
-| `src/renderer/createRenderer.ts` | WebGPU-first renderer, reports which backend actually ran, `?webgl=1` forces the WebGL2 fallback |
+| `src/renderer/createRenderer.ts` | Initializes the WebGPU backend and reports an unavailable adapter |
 | `src/viewer/stage.ts` | scene graph, camera, lights, grid, display modes, section, screenshot, render loop |
 | `src/viewer/environment.ts` | the procedural studio environment: glass and metal need something to reflect, and an HDR would cost an offline download |
 | `src/viewer/controller.ts` | camera navigation models (orbit / arcball / trackball) behind one contract, swapped in place |
@@ -241,8 +243,7 @@ suite also seeds another app's caches and verifies that service-worker activatio
 - Section view clips without capping the cut, so a hollow part shows its interior.
 - The OpenCascade engine is a one-time 7.6MB download (cached per build, then available offline).
   The sidebar footer reports its state; on a slow link the first STEP file is slow, later ones are not.
-- KTX2 textures on the WebGL2 fallback backend depend on `KTX2Loader.detectSupport` succeeding; the
-  failure path is a visible warning, not a silent blank surface.
+- KTX2 texture support depends on the adapter's compressed texture capabilities.
 
 ## Deployment
 

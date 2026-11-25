@@ -20,11 +20,7 @@ export async function loadGltf(
   const dracoLoader = new DRACOLoader();
   const ktx2Loader = new KTX2Loader();
   try {
-    // KTX2Loader only knows how to ask a WebGLRenderer about compressed-texture
-    // support. If the WebGPU backend rejects the question we keep going without the
-    // detector instead of failing the whole load.
-    type DetectSupportTarget = Parameters<KTX2Loader["detectSupport"]>[0];
-    ktx2Loader.detectSupport(renderer as unknown as DetectSupportTarget);
+    ktx2Loader.detectSupport(renderer);
   } catch (error) {
     warnings.push(`KTX2 检测失败，压缩贴图可能不显示：${describeError(error)}`);
   }

@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": false,
   "type": "module",
-  "description": "WebGPU-first viewer and parsers for STL / OBJ / glTF / 3MF / STEP / IGES / BREP. Parsing and rendering happen entirely in the browser.",
+  "description": "WebGPU viewer and parsers for STL / OBJ / glTF / 3MF / STEP / IGES / BREP. Parsing and rendering happen entirely in the browser.",
   "license": "MIT",
   "author": "Miao Zhuang <mizy@users.noreply.github.com>",
   "repository": {
@@ -21,6 +21,7 @@
     "verify": "node scripts/verify-site.mjs",
     "verify:tools": "node scripts/verify-viewer-tools.mjs",
     "verify:inspection": "node scripts/verify-inspection.mjs",
+    "verify:storybook": "node scripts/verify-storybook.mjs",
     "verify:loading": "node scripts/verify-loading.mjs",
     "verify:launch": "node scripts/verify-launch.mjs",
     "icons": "python3 scripts/make-icons.py",

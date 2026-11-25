@@ -51,9 +51,9 @@ const server = createServer(async (request, response) => {
 });
 await new Promise((resolve) => server.listen(port, "127.0.0.1", resolve));
 
-const gpuArgs = process.platform === "linux"
-  ? ["--use-angle=swiftshader", "--enable-unsafe-swiftshader"]
-  : ["--enable-unsafe-webgpu", "--use-angle=metal"];
+const gpuArgs = ["--enable-unsafe-webgpu"];
+if (process.platform === "linux") gpuArgs.push("--use-webgpu-adapter=swiftshader", "--disable-vulkan-surface");
+if (process.platform === "darwin") gpuArgs.push("--use-angle=metal");
 const browser = await chromium.launch({ channel: "chrome", args: gpuArgs });
 const page = await browser.newPage({ viewport: { width: 1100, height: 760 } });
 const errors = [];
@@ -68,14 +68,13 @@ page.on("console", (message) => {
 });
 
 try {
-  const forceWebGL = process.argv.includes("--webgl");
-  await page.goto(`${base}/scripts/package-demo.html${forceWebGL ? "?webgl=1" : ""}`, { waitUntil: "load" });
+  await page.goto(`${base}/scripts/package-demo.html`, { waitUntil: "load" });
   await page.waitForFunction(() => window.__ready === true, null, { timeout: 60000 });
 
   const meta = await page.evaluate(() => ({ presets: window.__pkg.presets, detect: window.__pkg.detect, backend: window.__pkg.viewer.backend }));
   assert.deepEqual(meta.presets, ["fast", "standard", "fine"], "quality presets exported");
   assert.equal(meta.detect, "step", "detectFormat exported");
-  if (forceWebGL) assert.equal(meta.backend, "webgl2");
+  assert.equal(meta.backend, "webgpu");
   console.log(`✓ 包入口导出可用（backend=${meta.backend}）`);
 
   const stepFixture = ["/samples/step/conical-surface.step"];
@@ -97,6 +96,10 @@ try {
   assert.equal(headless.mmPerUnit, null, "STL declares no unit, and the package says so");
   assert(headless.meshes > 0, "headless parse returned geometry");
   console.log(`✓ 无渲染器的 parseModel 路径（${headless.meshes} 个网格，单位未知）`);
+  const gltf = await page.evaluate(() => window.__pkg.parseOnly("/samples/gltf/Duck.glb"));
+  assert.equal(gltf.format, "gltf");
+  assert.equal(gltf.warnings, 0, "headless glTF can check compressed texture support without a renderer");
+  assert(gltf.meshes > 0);
 
   // Frame the STEP model and make sure the canvas actually has pixels.
   const painted = await page.evaluate(async () => {
@@ -123,6 +126,40 @@ try {
   assert.equal(painted.edges, true, "首次加载会生成边线");
   await page.screenshot({ path: path.join(tmpdir(), "mz-package-demo.png") });
   console.log(`✓ 渲染出画面（亮像素 ${painted.bright}，显示模式 ${painted.style}，边线 ${painted.edges}）`);
+
+  const pick = await page.evaluate(async () => {
+    const { viewer, load } = window.__pkg;
+    viewer.clear();
+    await load(["/samples/step/cube-10x10.stp"]);
+    const { stage } = viewer;
+    stage.setStandardView("front", false);
+    await stage.captureNextFrame();
+    const rect = document.getElementById("view").getBoundingClientRect();
+    const hit = await stage.pick(rect.left + rect.width / 2, rect.top + rect.height / 2, { exact: true });
+    const { min, max } = stage.active.box;
+    const leftEdge = min.clone().set(min.x, (min.y + max.y) / 2, max.z).project(stage.camera);
+    const edge = await stage.pick(rect.left + (leftEdge.x + 1) * rect.width / 2,
+      rect.top + (1 - leftEdge.y) * rect.height / 2, { inspect: true });
+    return {
+      face: hit?.face != null && hit?.localPoint != null && Number.isFinite(hit.localPoint.z),
+      edge: edge?.edge?.count === 1
+    };
+  });
+  assert.deepEqual(pick, { face: true, edge: true }, "the built package picks both CAD faces and edges with WebGPU");
+
+  const unavailable = await page.evaluate(async () => {
+    const { createModelViewer, WebGPUUnavailableError } = await import("/dist-lib/index.js");
+    Object.defineProperty(navigator, "gpu", { configurable: true, value: undefined });
+    try {
+      await createModelViewer(document.createElement("canvas"));
+      return false;
+    } catch (error) {
+      return error instanceof WebGPUUnavailableError;
+    } finally {
+      delete navigator.gpu;
+    }
+  });
+  assert(unavailable, "the SDK exposes an error when WebGPU is unavailable");
 
   assert.deepEqual(errors, [], `控制台不应有错误：${errors.join(" | ")}`);
   console.log("\n包冒烟测试通过：dist-lib 可被外部以 ESM 方式引用，OCCT 资源默认从包内解析。");

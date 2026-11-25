@@ -2,7 +2,8 @@ import * as THREE from "three/webgpu";
 import { LineSegments2 } from "three/addons/lines/webgpu/LineSegments2.js";
 import { LineSegmentsGeometry } from "three/addons/lines/LineSegmentsGeometry.js";
 import { disposeObject } from "../dispose";
-import type { EdgeRequest, EdgeResponse } from "./protocol";
+import { cadFaceSpans } from "../../loaders/cadFaces";
+import type { EdgeGroups, EdgeRequest, EdgeResponse, EdgeSegments } from "./protocol";
 
 /** Dark enough to read on the grey default material, light enough not to vanish on dark presets. */
 const EDGE_COLOR = 0x2b3644;
@@ -32,10 +33,10 @@ function copyGeometry(geometry: THREE.BufferGeometry, angle: number): EdgeReques
     }
   }
   const indices = geometry.index === null ? null : new Uint32Array(geometry.index.array);
-  return { positions, indices, angle };
+  return { positions, indices, angle, faces: cadFaceSpans(geometry) ?? [] };
 }
 
-function requestEdges(worker: Worker, input: EdgeRequest, signal: AbortSignal): Promise<Float32Array<ArrayBuffer>> {
+function requestEdges(worker: Worker, input: EdgeRequest, signal: AbortSignal): Promise<EdgeSegments> {
   return new Promise((resolve, reject) => {
     const abort = (): void => { worker.terminate(); reject(signal.reason); };
     const finish = (): void => signal.removeEventListener("abort", abort);
@@ -44,7 +45,7 @@ function requestEdges(worker: Worker, input: EdgeRequest, signal: AbortSignal): 
     worker.onmessageerror = () => { finish(); reject(new Error("无法读取边线计算结果")); };
     worker.onmessage = ({ data }: MessageEvent<EdgeResponse>) => {
       finish();
-      if (data.ok) resolve(data.positions);
+      if (data.ok) resolve(data);
       else reject(new Error(data.message));
     };
     try {
@@ -67,9 +68,9 @@ function requestEdges(worker: Worker, input: EdgeRequest, signal: AbortSignal): 
  * because they are triangles the pipeline can carry a negative polygon offset, pulling the line
  * towards the camera so it wins the depth test against the surface it belongs to.
  */
-function createEdgeMaterial(width: number): THREE.Line2NodeMaterial {
+export function createEdgeMaterial(width: number, color = EDGE_COLOR): THREE.Line2NodeMaterial {
   const material = new THREE.Line2NodeMaterial({
-    color: EDGE_COLOR,
+    color,
     linewidth: width,
     worldUnits: false,
     alphaToCoverage: true
@@ -78,6 +79,27 @@ function createEdgeMaterial(width: number): THREE.Line2NodeMaterial {
   material.polygonOffsetFactor = -2;
   material.polygonOffsetUnits = -4;
   return material;
+}
+
+const edgeGroups = new WeakMap<LineSegmentsGeometry, EdgeGroups>();
+const sourceMeshes = new WeakMap<LineSegments2, THREE.Mesh>();
+
+export function edgeSourceMesh(line: LineSegments2): THREE.Mesh | undefined {
+  return sourceMeshes.get(line);
+}
+
+export type EdgeHit = Readonly<{ line: LineSegments2; start: number; count: number }>;
+
+export function edgeAt(line: LineSegments2, segment: number): EdgeHit | null {
+  if (segment < 0 || segment >= line.geometry.instanceCount) return null;
+  const groups = edgeGroups.get(line.geometry);
+  if (groups === undefined) return { line, start: segment, count: 1 };
+  const group = groups.groupBySegment[segment];
+  return { line, start: groups.starts[group], count: groups.starts[group + 1] - groups.starts[group] };
+}
+
+export function sameEdge(first: EdgeHit | null, second: EdgeHit | null): boolean {
+  return first?.line === second?.line && first?.start === second?.start;
 }
 
 /** @entry Compute each shared geometry once and keep a live transform per mesh instance. */
@@ -97,18 +119,20 @@ export async function createEdges(root: THREE.Object3D, options: EdgeOptions): P
       signal.throwIfAborted();
       let buffer = buffers.get(mesh.geometry);
       if (buffer === undefined) {
-        const positions = await requestEdges(worker, copyGeometry(mesh.geometry, angle), signal);
+        const { positions, groups } = await requestEdges(worker, copyGeometry(mesh.geometry, angle), signal);
         signal.throwIfAborted();
         if (positions.length === 0) {
           buffer = null;
         } else {
           buffer = new LineSegmentsGeometry();
           buffer.setPositions(positions);
+          if (groups !== null) edgeGroups.set(buffer, groups);
         }
         buffers.set(mesh.geometry, buffer);
       }
       if (buffer !== null) {
         const lines = new LineSegments2(buffer, material);
+        sourceMeshes.set(lines, mesh);
         // The line shares the mesh's matrix instances, so exploded parts carry their edges along
         // without anything being rebuilt or re-uploaded.
         lines.matrixAutoUpdate = false;

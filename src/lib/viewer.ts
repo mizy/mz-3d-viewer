@@ -1,6 +1,7 @@
 import * as THREE from "three/webgpu";
 import { createRenderer } from "../renderer/createRenderer";
 import { Stage } from "../viewer/stage";
+import { disposeObject } from "../viewer/dispose";
 import { ACCEPTED_EXTENSIONS, primaryFiles } from "../loaders/openFiles";
 import type { ParsedModel } from "../loaders/types";
 import type { CadQuality } from "../loaders/step";
@@ -9,8 +10,6 @@ import { parseModel, type ParseOptions } from "./parse";
 export type ViewerOptions = Readonly<{
   /** OpenCascade tessellation quality for CAD imports. Defaults to "standard". */
   quality?: CadQuality;
-  /** Force the WebGL2 backend instead of WebGPU. */
-  forceWebGL?: boolean;
   /** Canvas clear colour. Defaults to the app's near-black. */
   background?: number;
   /** Start with the edge overlay on (default true). */
@@ -20,8 +19,7 @@ export type ViewerOptions = Readonly<{
 export type ModelViewer = Readonly<{
   /** The underlying stage: camera, section planes, display modes, picking. */
   stage: Stage;
-  /** Which backend actually produced frames. */
-  backend: "webgpu" | "webgl2";
+  backend: "webgpu";
   load: (input: File | readonly File[], options?: ParseOptions) => Promise<ParsedModel[]>;
   clear: () => void;
   resize: () => void;
@@ -36,7 +34,7 @@ export type ModelViewer = Readonly<{
  * own chrome — dock, panels, pivot marker — is deliberately not part of it.
  */
 export async function createModelViewer(canvas: HTMLCanvasElement, options: ViewerOptions = {}): Promise<ModelViewer> {
-  const { renderer, backend } = await createRenderer(canvas, options.forceWebGL === true);
+  const renderer = await createRenderer(canvas);
   const stage = new Stage(renderer, canvas, null);
   if (options.background !== undefined) {
     stage.scene.background = new THREE.Color(options.background);
@@ -47,6 +45,8 @@ export async function createModelViewer(canvas: HTMLCanvasElement, options: View
   observer.observe(canvas);
 
   async function load(input: File | readonly File[], parseOptions: ParseOptions = {}): Promise<ParsedModel[]> {
+    const signal = parseOptions.signal;
+    signal?.throwIfAborted();
     const files = Array.isArray(input) ? [...input] : [input as File];
     const primaries = primaryFiles(files);
     if (primaries.length === 0) {
@@ -60,6 +60,10 @@ export async function createModelViewer(canvas: HTMLCanvasElement, options: View
         quality: parseOptions.quality ?? options.quality,
         renderer: parseOptions.renderer ?? renderer
       });
+      if (signal?.aborted) {
+        disposeObject(model.root);
+        signal.throwIfAborted();
+      }
       const handle = stage.addModel(model, file.name);
       stage.setBytes(handle.id, file.size);
       stage.fitToActive();
@@ -67,6 +71,7 @@ export async function createModelViewer(canvas: HTMLCanvasElement, options: View
     }
     // Edges are built lazily, so the first load has to ask for them once.
     if (stage.style === "edges") await stage.setDisplayStyle("edges");
+    signal?.throwIfAborted();
     return parsed;
   }
 
@@ -76,7 +81,7 @@ export async function createModelViewer(canvas: HTMLCanvasElement, options: View
 
   return {
     stage,
-    backend,
+    backend: "webgpu",
     load,
     clear,
     resize: () => stage.resize(),

@@ -1,5 +1,7 @@
-import { useEffect } from "storybook/preview-api";
+import { useEffect, useMemo } from "storybook/preview-api";
 import type { Meta, StoryObj } from "@storybook/html-vite";
+import type { ParsedModel } from "../src/loaders/types";
+import { disposeObject } from "../src/viewer/dispose";
 import {
   ACCEPTED_EXTENSIONS,
   CAD_QUALITY_PRESETS,
@@ -7,7 +9,8 @@ import {
   detectFormat,
   parseFiles,
   parseModel,
-  type CadQuality as CadQualityName
+  type CadQuality as CadQualityName,
+  type ModelViewer
 } from "../src/lib";
 import {
   describeModels,
@@ -28,12 +31,8 @@ type Args = {
 const meta: Meta<Args> = {
   title: "Package/API",
   parameters: { layout: "fullscreen" },
-  args: {
-    sample: SAMPLES.step,
-    quality: "standard",
-    baseUrl: "/occt/"
-  },
   argTypes: {
+    baseUrl: { control: "text" },
     sample: { control: "select", options: Object.values(SAMPLES) },
     quality: { control: "inline-radio", options: Object.keys(CAD_QUALITY_PRESETS) }
   }
@@ -44,6 +43,7 @@ type Story = StoryObj<Args>;
 
 /** Pure API surface: no files, no GPU — useful as a quick regression check. */
 export const PublicExports: Story = {
+  parameters: { controls: { disable: true } },
   render: () => {
     const { root, body } = panel("公开导出与文件探测");
     body.append(table(
@@ -72,68 +72,100 @@ export const PublicExports: Story = {
 
 /** Headless parser feeding the embeddable viewer; the panel reports units and warnings. */
 export const ParseModel: Story = {
-  render: (args) => useViewer(args, `parseModel · ${args.sample} · ${args.quality}`, async (viewer, ui) => {
-    const file = await fetchSample(args.sample);
-    ui.setStatus("解析中…");
-    const model = await parseModel(file, {
-      quality: args.quality,
-      onProgress: (progress) => ui.setStatus(
-        `${progress.label}${progress.ratio === null ? "" : ` · ${Math.round(progress.ratio * 100)}%`}`
-      )
-    });
-    viewer.stage.addModel(model, file.name);
-    await viewer.stage.setDisplayStyle("edges");
-    viewer.stage.fitToActive();
-    ui.setInfo(describeModels([model]));
+  args: { sample: SAMPLES.step },
+  parameters: { controls: { include: ["sample"] } },
+  render: (args) => useViewer(`parseModel · ${args.sample}`, {
+    key: args.sample,
+    setup: async (viewer, ui, signal) => {
+      const file = await fetchSample(args.sample, signal);
+      ui.setStatus("解析中…");
+      const model = await parseModel(file, {
+        signal,
+        onProgress: ({ label, ratio }) => {
+          if (!signal.aborted) ui.setStatus(`${label}${ratio === null ? "" : ` · ${Math.round(ratio * 100)}%`}`);
+        }
+      });
+      addParsedModel(viewer, model, file.name, signal);
+      await viewer.stage.setDisplayStyle("edges");
+      if (!signal.aborted) ui.setInfo(describeModels([model]));
+    }
   })
 };
 
 /** OBJ + MTL + PNG passed together: companions must resolve, including the texture. */
 export const ParseFilesWithCompanions: Story = {
-  render: (args) => useViewer(args, "parseFiles · OBJ + MTL + 贴图", async (viewer, ui) => {
-    ui.setStatus("解析 OBJ 配套文件…");
-    const files = await Promise.all([fetchSample(SAMPLES.obj), fetchSample("obj/cube.mtl"), fetchSample("obj/cube-texture.png")]);
-    const models = await parseFiles(files);
-    for (const [index, model] of models.entries()) viewer.stage.addModel(model, files[index].name);
-    viewer.stage.fitToActive();
-    ui.setInfo(describeModels(models));
+  parameters: { controls: { disable: true } },
+  render: () => useViewer("parseFiles · OBJ + MTL + 贴图", {
+    setup: async (viewer, ui, signal) => {
+      ui.setStatus("解析 OBJ 配套文件…");
+      const files = await Promise.all([SAMPLES.obj, "obj/cube.mtl", "obj/cube-texture.png"]
+        .map((path) => fetchSample(path, signal)));
+      const models = await parseFiles(files, { signal });
+      if (signal.aborted) {
+        for (const model of models) disposeObject(model.root);
+        signal.throwIfAborted();
+      }
+      for (const [index, model] of models.entries()) viewer.stage.addModel(model, files[index].name);
+      viewer.stage.fitToActive();
+      ui.setInfo(describeModels(models));
+    }
   })
 };
 
-/** OpenCascade tessellation quality changes the triangle budget for the same STEP file. */
+/** A curved STEP surface shows the effect of each tessellation preset. */
 export const CadQuality: Story = {
-  render: (args) => useViewer(args, `CAD 精度 · ${args.quality}`, async (viewer, ui) => {
-    const file = await fetchSample(SAMPLES.step);
-    const started = performance.now();
-    const model = await parseModel(file, { quality: args.quality });
-    const elapsed = Math.round(performance.now() - started);
-    viewer.stage.addModel(model, file.name);
-    await viewer.stage.setDisplayStyle("edges");
-    viewer.stage.fitToActive();
-    ui.setInfo(`${CAD_QUALITY_PRESETS[args.quality].label} · ${elapsed}ms\n${describeModels([model])}`);
+  args: { quality: "standard" },
+  parameters: { controls: { include: ["quality"] } },
+  render: (args) => useViewer(`CAD 精度 · ${args.quality}`, {
+    key: args.quality,
+    setup: async (viewer, ui, signal) => {
+      const file = await fetchSample(SAMPLES.stepCone, signal);
+      const started = performance.now();
+      const model = await parseModel(file, { quality: args.quality, signal });
+      const elapsed = Math.round(performance.now() - started);
+      addParsedModel(viewer, model, file.name, signal);
+      await viewer.stage.setDisplayStyle("edges");
+      if (!signal.aborted) ui.setInfo(`${CAD_QUALITY_PRESETS[args.quality].label} · ${elapsed}ms\n${describeModels([model])}`);
+    }
   })
 };
+
+function addParsedModel(
+  viewer: ModelViewer, model: ParsedModel, name: string, signal: AbortSignal
+): void {
+  if (signal.aborted) {
+    disposeObject(model.root);
+    signal.throwIfAborted();
+  }
+  viewer.stage.addModel(model, name);
+  viewer.stage.fitToActive();
+}
 
 /** Point the worker at a different directory; an invalid base surfaces the load error. */
 export const ConfigureCadAssets: Story = {
   args: { baseUrl: "/occt/" },
+  parameters: { controls: { include: ["baseUrl"] } },
   render: (args) => {
-    const { root, body } = panel("configureCadAssets");
+    const { root, body } = useMemo(() => panel("configureCadAssets"), []);
     useEffect(() => {
-      let cancelled = false;
+      const controller = new AbortController();
+      const { signal } = controller;
       body.textContent = `baseUrl=${args.baseUrl}\n解析中…`;
       configureCadAssets({ baseUrl: args.baseUrl });
-      void fetchSample(SAMPLES.step)
-        .then((file) => parseModel(file))
+      void fetchSample(SAMPLES.step, signal)
+        .then((file) => parseModel(file, { signal }))
         .then((model) => {
-          if (!cancelled) body.textContent = `baseUrl=${args.baseUrl}\n${describeModels([model])}`;
+          if (!signal.aborted) body.textContent = `baseUrl=${args.baseUrl}\n${describeModels([model])}`;
+          disposeObject(model.root);
         })
         .catch((error: unknown) => {
-          if (!cancelled) body.textContent = `baseUrl=${args.baseUrl}\n失败：${errorMessage(error)}`;
+          if (!signal.aborted) body.textContent = `baseUrl=${args.baseUrl}\n失败：${errorMessage(error)}`;
         })
-        .finally(() => configureCadAssets({ baseUrl: "/occt/" }));
+        .finally(() => {
+          if (!signal.aborted) configureCadAssets({ baseUrl: "/occt/" });
+        });
       return () => {
-        cancelled = true;
+        controller.abort();
         configureCadAssets({ baseUrl: "/occt/" });
       };
     }, [args.baseUrl]);
@@ -141,39 +173,56 @@ export const ConfigureCadAssets: Story = {
   }
 };
 
+function createCancellationPanel() {
+  const { root, body } = panel("取消与进度回调");
+  const start = document.createElement("button");
+  start.textContent = "开始解析 step-sample.stp";
+  const cancel = document.createElement("button");
+  cancel.textContent = "取消";
+  cancel.disabled = true;
+  const status = document.createElement("p");
+  body.append(start, document.createTextNode(" "), cancel, status);
+  return { root, start, cancel, status };
+}
+
 /** Aborting a CAD import terminates its worker; progress labels show it was alive. */
 export const CancellationAndProgress: Story = {
+  parameters: { controls: { disable: true } },
   render: () => {
-    const { root, body } = panel("取消与进度回调");
-    const start = document.createElement("button");
-    start.textContent = "开始解析 step-sample.stp";
-    const cancel = document.createElement("button");
-    cancel.textContent = "取消";
-    cancel.disabled = true;
-    const status = document.createElement("p");
-    body.append(start, document.createTextNode(" "), cancel, status);
+    const { root, start, cancel, status } = useMemo(createCancellationPanel, []);
     useEffect(() => {
+      const listeners = new AbortController();
       let controller: AbortController | null = null;
       start.addEventListener("click", () => {
         controller?.abort();
-        controller = new AbortController();
+        const run = new AbortController();
+        controller = run;
+        const { signal } = run;
         cancel.disabled = false;
         status.textContent = "解析中…";
-        void fetchSample(SAMPLES.stepAssembly)
+        void fetchSample(SAMPLES.stepAssembly, signal)
           .then((file) => parseModel(file, {
-            signal: controller?.signal,
-            onProgress: (progress: { label: string }) => { status.textContent = progress.label; }
+            signal,
+            onProgress: ({ label }) => { if (controller === run && !signal.aborted) status.textContent = label; }
           }))
-          .then((model) => { status.textContent = `完成：${describeModels([model])}`; })
-          .catch((error: unknown) => {
-            status.textContent = controller?.signal.aborted === true ? "已取消（worker 已终止）" : `失败：${errorMessage(error)}`;
+          .then((model) => {
+            if (controller === run && !signal.aborted) status.textContent = `完成：${describeModels([model])}`;
+            disposeObject(model.root);
           })
-          .finally(() => { cancel.disabled = true; });
-      });
-      cancel.addEventListener("click", () => controller?.abort());
-      return () => controller?.abort();
+          .catch((error: unknown) => {
+            if (controller === run) {
+              status.textContent = signal.aborted ? "已取消" : `失败：${errorMessage(error)}`;
+            }
+          })
+          .finally(() => { if (controller === run) cancel.disabled = true; });
+      }, { signal: listeners.signal });
+      cancel.addEventListener("click", () => controller?.abort(), { signal: listeners.signal });
+      return () => {
+        listeners.abort();
+        controller?.abort();
+        controller = null;
+      };
     }, []);
     return root;
   }
 };
-

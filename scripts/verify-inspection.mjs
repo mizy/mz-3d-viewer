@@ -38,9 +38,9 @@ async function hoverWorldPoint(page, coordinates) {
 }
 
 /** Wait for a predicate, but report the assertion's own message instead of a generic timeout. */
-async function expectSoon(page, predicate, message) {
+async function expectSoon(page, predicate, message, argument = null) {
   try {
-    await page.waitForFunction(predicate, null, { timeout: 5000 });
+    await page.waitForFunction(predicate, argument, { timeout: 5000 });
   } catch {
     assert.fail(message);
   }
@@ -167,6 +167,39 @@ try {
     return appearance.surfaces[0].mesh.material === appearance.override.solid;
   });
   await clickFace(0.5, 0.5);
+  await expectSoon(page, () => {
+    const model = window.__mzViewer.stage.active;
+    const mesh = model.parts[0].mesh;
+    return model.selectedFace?.count === 6 && model.selectedEdge === null &&
+      Array.isArray(mesh.material) && mesh.geometry.groups.some(({ materialIndex, count }) =>
+        mesh.material[materialIndex] === model.appearance.highlight && count === 6);
+  }, "face selection highlights only the picked CAD face");
+
+  const edgePoint = await facePoint(0, 0.5);
+  await page.mouse.move(edgePoint.x, edgePoint.y);
+  await expectSoon(page, () => Boolean(window.__mzViewer.stage.hoveredSurface?.edge),
+    "a visible edge takes priority over faces");
+  await page.mouse.click(edgePoint.x, edgePoint.y);
+  await expectSoon(page, () => {
+    const { stage } = window.__mzViewer;
+    const model = stage.active;
+    return model.selectedEdge?.count === 1 && model.selectedFace === null &&
+      stage.selectedEdges.get(model.id)?.line?.visible === true &&
+      stage.hoveredEdge.line === null && !Array.isArray(model.parts[0].mesh.material);
+  }, "edge selection retains the line overlay without highlighting either face");
+  await page.mouse.click(360, 125);
+  await expectSoon(page, () => window.__mzViewer.stage.active.selectedEdge === null,
+    "clicking blank space clears the edge selection");
+  console.log("✓ face mode picks a single CAD face or visible edge");
+
+  await page.selectOption("#pickMode", "body");
+  await page.mouse.move(faceCenter.x, faceCenter.y);
+  await expectSoon(page, () => {
+    const model = window.__mzViewer.stage.active;
+    return model.parts[0].mesh.material === model.appearance.hover &&
+      model.parts[0].mesh.geometry.groups.length === 0;
+  }, "body hover paints the whole mesh");
+  await clickFace(0.5, 0.5);
   // Picking is answered by the GPU, so a click settles a frame later than the pointerup event.
   await page.waitForFunction(() => window.__mzViewer.stage.active.selectedPart === 0);
   await page.mouse.move(faceCenter.x + 5, faceCenter.y);
@@ -270,8 +303,98 @@ try {
   await page.waitForFunction(() => document.getElementById("pivotGizmo").hidden === true, null, { timeout: 5000 });
   console.log("✓ cursor pivot marker follows the press and fades out on its own");
 
+  await page.click("#brandLink");
+  await page.locator("#fileInput").setInputFiles(indexedInstances());
+  await page.waitForFunction(() => window.__mzViewer.stage.active?.format === "gltf" &&
+    document.getElementById("progressWrap").hidden);
+  const instances = await page.evaluate(async () => {
+    const { stage, capture } = window.__mzViewer;
+    stage.setStandardView("front", false);
+    await capture();
+    const mesh = stage.active.parts[0].mesh;
+    const rect = stage.renderer.domElement.getBoundingClientRect();
+    const hitAt = (x, y, snap) => {
+      const point = mesh.position.clone().set(x, y, 0).applyMatrix4(mesh.matrixWorld).project(stage.camera);
+      return stage.pick(rect.left + (point.x + 1) * rect.width / 2,
+        rect.top + (1 - point.y) * rect.height / 2, { exact: true, snap });
+    };
+    const left = await hitAt(-2, 0, false);
+    const empty = await hitAt(0, 0, false);
+    const right = await hitAt(2, 0, false);
+    // Two CSS pixels or less from the indexed triangle's top vertex.
+    const snapped = await hitAt(2, 0.49, true);
+    return {
+      leftX: left?.localPoint?.x, rightX: right?.localPoint?.x, empty: empty === null,
+      index: snapped?.triangleIndex, vertex: snapped?.localPoint?.toArray()
+    };
+  });
+  assert(instances.leftX < -1.99 && instances.rightX > 1.99 && instances.empty, JSON.stringify(instances));
+  assert.equal(instances.index, 0, "the indexed snap pass returns the hit triangle");
+  assert.deepEqual(instances.vertex, [2, 0.5, 0], "snap preserves the selected instance transform");
+  console.log("✓ glTF indexed instances use their visible positions, including the snapped vertex");
+
+  await page.click("#brandLink");
+  await page.evaluate(() => window.__mzViewer.stage.setDisplayStyle("edges"));
+  await page.locator("#fileInput").setInputFiles(new URL("../samples/step/conical-surface.step", import.meta.url).pathname);
+  await page.waitForFunction(() => window.__mzViewer.stage.active?.edges?.visible);
+  await page.selectOption("#pickMode", "face");
+  const curve = await page.evaluate(async () => {
+    const { stage, capture } = window.__mzViewer;
+    stage.setStandardView("iso", false);
+    await capture();
+    const rect = stage.renderer.domElement.getBoundingClientRect();
+    for (const line of stage.active.edges.children) {
+      const start = line.geometry.getAttribute("instanceStart");
+      const end = line.geometry.getAttribute("instanceEnd");
+      const point = stage.controls.target.clone();
+      for (let i = 0; i < start.count; i += Math.max(1, Math.floor(start.count / 50))) {
+        point.set((start.getX(i) + end.getX(i)) / 2, (start.getY(i) + end.getY(i)) / 2,
+          (start.getZ(i) + end.getZ(i)) / 2).applyMatrix4(line.matrixWorld).project(stage.camera);
+        const x = rect.left + (point.x + 1) * rect.width / 2;
+        const y = rect.top + (1 - point.y) * rect.height / 2;
+        const hit = await stage.pick(x, y, { inspect: true });
+        if (hit?.edge?.count > 1) return { x, y, count: hit.edge.count };
+      }
+    }
+    return null;
+  });
+  assert(curve !== null, "the conical STEP fixture has a pickable multi-segment edge");
+  await page.mouse.click(curve.x, curve.y);
+  await expectSoon(page, (count) => window.__mzViewer.stage.active.selectedEdge?.count === count,
+    "clicking a curved edge selects all of its segments", curve.count);
+  console.log(`✓ curved CAD edge selects all ${curve.count} tessellated segments`);
+
   assert.deepEqual(errors, []);
   console.log(`✓ gray shading: STEP face tones ${faces.join(" / ")}; parallel faces ${near} / ${far}`);
 } finally {
   await browser.close();
+}
+
+
+function indexedInstances() {
+  const positions = Float32Array.of(-0.5, -0.5, 0, 0.5, -0.5, 0, 0, 0.5, 0);
+  const translations = Float32Array.of(-2, 0, 0, 2, 0, 0);
+  const indices = Uint16Array.of(0, 1, 2);
+  const buffer = Buffer.concat([Buffer.from(positions.buffer), Buffer.from(translations.buffer), Buffer.from(indices.buffer)]);
+  const document = {
+    asset: { version: "2.0" },
+    extensionsUsed: ["EXT_mesh_gpu_instancing"],
+    extensionsRequired: ["EXT_mesh_gpu_instancing"],
+    scene: 0,
+    scenes: [{ nodes: [0] }],
+    nodes: [{ mesh: 0, extensions: { EXT_mesh_gpu_instancing: { attributes: { TRANSLATION: 1 } } } }],
+    meshes: [{ primitives: [{ indices: 2, attributes: { POSITION: 0 } }] }],
+    buffers: [{ byteLength: buffer.length, uri: `data:application/octet-stream;base64,${buffer.toString("base64")}` }],
+    bufferViews: [
+      { buffer: 0, byteOffset: 0, byteLength: positions.byteLength },
+      { buffer: 0, byteOffset: positions.byteLength, byteLength: translations.byteLength },
+      { buffer: 0, byteOffset: positions.byteLength + translations.byteLength, byteLength: indices.byteLength }
+    ],
+    accessors: [
+      { bufferView: 0, componentType: 5126, count: 3, type: "VEC3", min: [-0.5, -0.5, 0], max: [0.5, 0.5, 0] },
+      { bufferView: 1, componentType: 5126, count: 2, type: "VEC3", min: [-2, 0, 0], max: [2, 0, 0] },
+      { bufferView: 2, componentType: 5123, count: 3, type: "SCALAR" }
+    ]
+  };
+  return { name: "indexed-instances.gltf", mimeType: "model/gltf+json", buffer: Buffer.from(JSON.stringify(document)) };
 }

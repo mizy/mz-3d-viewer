@@ -14,6 +14,12 @@
 </head>
 <body>
 <svg class="icon-defs" aria-hidden="true"><defs><symbol id="i-cube" viewBox="0 0 24 24"><path d="M12 3 21 8v9l-9 5-9-5V8l9-5Z M3 8l9 5 9-5 M12 13v9"/></symbol><symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14 M5 12h14"/></symbol><symbol id="i-settings" viewBox="0 0 24 24"><path d="M4 7h16 M4 17h16 M8 4v6 M16 14v6"/></symbol><symbol id="i-layers" viewBox="0 0 24 24"><path d="m12 3 9 5-9 5-9-5 9-5Z M3 12l9 5 9-5 M3 16l9 5 9-5"/></symbol><symbol id="i-explode" viewBox="0 0 24 24"><path d="m12 8 5 4-5 4-5-4 5-4Z M12 2v3 M12 19v3 M2 7l3 2 M19 15l3 2 M2 17l3-2 M19 9l3-2"/></symbol><symbol id="i-fit" viewBox="0 0 24 24"><path d="M8 3H3v5 M16 3h5v5 M3 16v5h5 M21 16v5h-5 M8 12h8 M12 8v8"/></symbol><symbol id="i-close" viewBox="0 0 24 24"><path d="m6 6 12 12 M6 18 18 6"/></symbol><symbol id="i-arrow" viewBox="0 0 24 24"><path d="M5 12h14 m-6-6 6 6-6 6"/></symbol><symbol id="i-home" viewBox="0 0 24 24"><path d="m3 11 9-8 9 8 M5 10v11h5v-7h4v7h5V10"/></symbol><symbol id="i-eye" viewBox="0 0 24 24"><path d="M2 12s3.6-6 10-6 10 6 10 6-3.6 6-10 6S2 12 2 12Z M12 9.2a2.8 2.8 0 1 0 0 5.6 2.8 2.8 0 0 0 0-5.6Z"/></symbol><symbol id="i-lock" viewBox="0 0 24 24"><path d="M7 10V7a5 5 0 0 1 10 0v3 M5 10h14v11H5V10Z"/></symbol></defs></svg>
+<main id="webgpuUnavailable" class="drop-hint" hidden>
+  <div class="drop-hint-inner" role="alert">
+    <h1>当前环境无法使用 WebGPU</h1>
+    <p>请用支持 WebGPU 的浏览器打开，并开启图形加速。</p>
+  </div>
+</main>
 <div class="app" id="app">
   <main class="stage" id="stage" aria-label="3D 模型工作台">
     <canvas id="view" aria-label="模型画布：单指旋转，双指缩放和平移"></canvas>
@@ -111,6 +117,9 @@
   <nav class="tool-dock glass" aria-label="模型工具">
     <button id="styleBtn" class="dock-btn" type="button" aria-pressed="false" title="显示边线" disabled><svg class="icon" aria-hidden="true"><use href="#i-layers"/></svg><span>边线</span></button>
     <button id="displayBtn" class="dock-btn" type="button" popovertarget="displayMenu" disabled><svg class="icon" aria-hidden="true"><use href="#i-eye"/></svg><span>显示</span></button>
+    <label id="pickModeControl" class="pick-mode" hidden><span class="sr-only">拾取模式</span>
+      <select id="pickMode"><option value="face">面 / 边</option><option value="body">体</option></select>
+    </label>
     <button id="fitBtn" class="dock-btn" type="button" disabled><svg class="icon" aria-hidden="true"><use href="#i-fit"/></svg><span>适应</span></button>
     <button id="toolsToggle" class="dock-btn" type="button" popovertarget="toolsMenu"><svg class="icon" aria-hidden="true"><use href="#i-settings"/></svg><span>工具</span></button>
   </nav>
@@ -165,8 +174,8 @@
       <label class="row">显示单位<select id="unitSelect"><option value="mm">毫米 mm</option><option value="cm">厘米 cm</option><option value="m">米 m</option><option value="in">英寸 in</option></select></label>
       <p class="panel-note">源单位决定文件坐标的实际尺寸，仅单位未知的模型需要指定；显示单位只改变读数。</p>
       <label class="row">CAD 精度<select id="cadQualitySelect"><option value="fast">快速</option><option value="standard" selected>标准</option><option value="fine">精细</option></select></label>
-      <label class="row">边线角度<select id="edgeAngleSelect"><option value="15">15°</option><option value="30" selected>30°</option><option value="45">45°</option></select></label>
-      <label class="row">边线粗细<input type="range" id="edgeWidthRange" aria-label="边线粗细（像素）" min="1" max="4" step="0.5" value="2" /><output id="edgeWidthValue" class="mono">2.0px</output></label>
+      <label class="row">网格边线角度<select id="edgeAngleSelect"><option value="15">15°</option><option value="30" selected>30°</option><option value="45">45°</option></select></label>
+      <label class="row">边线粗细<input type="range" id="edgeWidthRange" aria-label="边线粗细（像素）" min="1" max="4" step="0.5" value="1" /><output id="edgeWidthValue" class="mono">1.0px</output></label>
     </details>
     <div class="export-actions"><button id="shotBtn" class="btn" type="button" disabled>保存截图</button><button id="fullscreenBtn" class="btn" type="button">全屏查看</button></div>
     <footer class="sidebar-footer"><span>文件仅在本机处理，无需上传。</span><div><span id="backendBadge" class="badge">检测中…</span><span id="buildStamp" class="mono">build dev</span></div><div id="cadEngineState" class="mono"></div></footer>

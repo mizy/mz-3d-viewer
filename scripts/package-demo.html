@@ -27,8 +27,7 @@
 
   const viewer = await createModelViewer(document.getElementById("view"), {
     background: 0x0b1016,
-    quality: "fine",
-    forceWebGL: new URLSearchParams(location.search).get("webgl") === "1"
+    quality: "fine"
   });
 
   async function toFile(url) {
