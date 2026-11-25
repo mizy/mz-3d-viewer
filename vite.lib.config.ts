@@ -20,9 +20,6 @@ export default defineConfig({
     // public/ belongs to the app (icons, manifest, the wasm copy it serves); the package ships
     // only its entry, types and the occt/ directory build-package.mjs copies beside them.
     copyPublicDir: false,
-    // public/ belongs to the app (icons, manifest, the wasm copy it serves); the package ships
-    // only its entry, types and the occt/ directory build-package.mjs copies beside them.
-    copyPublicDir: false,
     minify: false,
     sourcemap: true,
     lib: {

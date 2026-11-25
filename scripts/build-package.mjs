@@ -40,6 +40,7 @@ run("pnpm", ["exec", "tsc", "-p", "tsconfig.lib.json"]);
 console.log("→ 复制 OpenCascade 资源与许可");
 const occtOut = path.join(out, "occt");
 await mkdir(occtOut, { recursive: true });
+await cp(path.join(root, "node_modules", "three", "LICENSE"), path.join(out, "LICENSE.three.txt"));
 for (const file of OCCT_FILES) {
   await cp(path.join(occtSource, file), path.join(occtOut, file));
 }
@@ -50,7 +51,7 @@ for (const entry of entries) {
   const info = await stat(path.join(out, entry));
   if (info.isFile()) bytes += info.size;
 }
-const missing = ["index.js", "index.js.map", "types/lib/index.d.ts", ...OCCT_FILES.map((file) => path.join("occt", file))]
+const missing = ["index.js", "index.js.map", "types/lib/index.d.ts", "LICENSE.three.txt", ...OCCT_FILES.map((file) => path.join("occt", file))]
   .filter((file) => !entries.includes(file.replaceAll("\\", "/")));
 if (missing.length > 0) {
   throw new Error(`产物缺少：${missing.join(", ")}`);

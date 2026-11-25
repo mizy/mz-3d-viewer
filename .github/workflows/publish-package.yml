@@ -1,0 +1,71 @@
+name: Publish npm package
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: npm-package-${{ github.event_name == 'pull_request' && github.ref || 'main' }}
+  cancel-in-progress: false
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.package.outputs.version }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 12.18.0
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          package-manager-cache: false
+      - run: node --test scripts/release-package.test.mjs
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm typecheck
+      - run: pnpm build:pkg
+      - run: pnpm verify:package --webgl
+      - id: package
+        run: node scripts/release-package.mjs check
+      - if: github.repository == 'mizy/mz-3d-viewer' && github.event_name != 'pull_request' && github.ref == 'refs/heads/main' && steps.package.outputs.version != ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: dist-lib
+          path: dist-lib/
+          if-no-files-found: error
+
+  publish:
+    if: github.repository == 'mizy/mz-3d-viewer' && github.event_name != 'pull_request' && github.ref == 'refs/heads/main' && needs.check.outputs.version != ''
+    needs: check
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      packages: write
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          registry-url: https://npm.pkg.github.com
+          scope: "@mizy"
+          package-manager-cache: false
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist-lib
+          path: dist-lib/
+      - run: node scripts/release-package.mjs publish
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

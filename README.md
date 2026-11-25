@@ -53,12 +53,20 @@ new arguments. Chromium without WebGPU still works through the WebGL2 fallback.
 
 ## Use it as a package
 
+Authenticate to GitHub Packages with a personal access token (classic) with `read:packages`.
+Use your own GitHub username and enter the token as the password when prompted.
+
+```sh
+npm login --scope=@mizy --registry=https://npm.pkg.github.com --auth-type=legacy
+pnpm add @mizy/mz-3d-viewer
+```
+
 The same source ships two ways: the app (`pnpm build` → `dist/`) and a library (`pnpm build:pkg` →
 `dist-lib/`). The library exports the parsers, an embeddable viewer, and the switch for where the
 OpenCascade assets live.
 
 ```ts
-import { configureCadAssets, createModelViewer } from "mz-3d-viewer";
+import { configureCadAssets, createModelViewer } from "@mizy/mz-3d-viewer";
 
 // Optional: the default is the occt/ directory shipped next to the package entry.
 configureCadAssets({ baseUrl: "/static/mz-occt/" });
@@ -70,14 +78,15 @@ await viewer.load(fileInput.files[0]);   // STEP / IGES / BREP / 3MF / STL / OBJ
 Headless, when the geometry only has to land in your own scene:
 
 ```ts
-import { parseModel } from "mz-3d-viewer";
+import { parseModel } from "@mizy/mz-3d-viewer";
 
 const { root, sourceUnit, warnings } = await parseModel(file, { quality: "fine" });
 // sourceUnit.mmPerUnit is 1 for STEP/IGES, the declared factor for 3MF, null when unknown.
 scene.add(root);
 ```
 
-- `three` is a peer dependency and is never bundled, so the consumer keeps one three.js instance.
+- `three` is a peer dependency for the viewer. The edge worker bundles the geometry code it runs
+  in its own thread, and its three.js license ships in `dist-lib/LICENSE.three.txt`.
 - The OpenCascade worker and wasm (7.3MB, the price of STEP/IGES/BREP) ship in the tarball under
   `occt/`. If your bundler does not serve package assets, copy that directory into your static root
   and point `configureCadAssets` at it.
@@ -245,10 +254,32 @@ the service worker plus Pages' fixed `cache-control: max-age=600` are the usual 
 Service-worker cache names include the site's scope; activation only removes older caches with that
 same scope, preserving other applications hosted on the same origin.
 
+## Package releases
+
+[Publish npm package](.github/workflows/publish-package.yml) checks the package on pull requests and
+publishes to GitHub Packages from `main`. The largest change since the previous release wins:
+
+| Commit message | Version increment |
+| --- | --- |
+| `feat!:`, another conventional subject with `!`, or a `BREAKING CHANGE:` footer | Major |
+| `feat:` | Minor |
+| `fix:` or `perf:` | Patch |
+| Other commits, such as `docs:` and `chore:` | No release |
+
+Scoped subjects such as `fix(loader): preserve STEP units` work too. With squash merges, use the
+appropriate commit subject on the squash commit. The workflow applies the version to the tarball
+and pushes `vX.Y.Z` to the exact source commit after publishing. If a run stops between those
+steps, the next attempt recovers the tag using the published package before calculating a new version.
+
+Run `node --test scripts/release-package.test.mjs` for version and publish recovery checks, or
+`pnpm build:pkg && node scripts/release-package.mjs check` to build and verify the planned tarball
+locally.
+
 ## License
 
 MIT — see `LICENSE`. Bundled third-party components keep their own terms: OpenCascade Technology,
 compiled through `occt-import-js` and shipped as a WebAssembly module under `occt/`, is LGPL-2.1 with
 the Open CASCADE exception. Both licence texts travel with the package
-(`occt/license.occt.txt`, `occt/license.occt-import-js.txt`); the module is loaded at runtime rather
-than linked into the JavaScript, so it stays replaceable.
+(`occt/license.occt.txt`, `occt/license.occt-import-js.txt`). The module is replaceable via
+`configureCadAssets`. Its corresponding source and build instructions are in
+[occt-import-js 0.0.23](https://github.com/kovacsv/occt-import-js/tree/c2148e54b456b571238d35cac037d304053d64b2).

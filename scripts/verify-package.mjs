@@ -51,7 +51,10 @@ const server = createServer(async (request, response) => {
 });
 await new Promise((resolve) => server.listen(port, "127.0.0.1", resolve));
 
-const browser = await chromium.launch({ channel: "chrome", args: ["--enable-unsafe-webgpu", "--use-angle=metal"] });
+const gpuArgs = process.platform === "linux"
+  ? ["--use-angle=swiftshader", "--enable-unsafe-swiftshader"]
+  : ["--enable-unsafe-webgpu", "--use-angle=metal"];
+const browser = await chromium.launch({ channel: "chrome", args: gpuArgs });
 const page = await browser.newPage({ viewport: { width: 1100, height: 760 } });
 const errors = [];
 page.on("pageerror", (error) => errors.push(error.message));
@@ -65,15 +68,20 @@ page.on("console", (message) => {
 });
 
 try {
-  await page.goto(`${base}/scripts/package-demo.html`, { waitUntil: "load" });
+  const forceWebGL = process.argv.includes("--webgl");
+  await page.goto(`${base}/scripts/package-demo.html${forceWebGL ? "?webgl=1" : ""}`, { waitUntil: "load" });
   await page.waitForFunction(() => window.__ready === true, null, { timeout: 60000 });
 
   const meta = await page.evaluate(() => ({ presets: window.__pkg.presets, detect: window.__pkg.detect, backend: window.__pkg.viewer.backend }));
   assert.deepEqual(meta.presets, ["fast", "standard", "fine"], "quality presets exported");
   assert.equal(meta.detect, "step", "detectFormat exported");
+  if (forceWebGL) assert.equal(meta.backend, "webgl2");
   console.log(`✓ 包入口导出可用（backend=${meta.backend}）`);
 
-  const step = await page.evaluate(() => window.__pkg.load(["/samples/step/cube-10x10.stp"]));
+  const stepFixture = ["/samples/step/conical-surface.step"];
+  const step = await page.evaluate((urls) => window.__pkg.load(urls), stepFixture);
+  const coarseStep = await page.evaluate((urls) => window.__pkg.load(urls, "fast"), stepFixture);
+  assert(step[0].triangles > coarseStep[0].triangles, "viewer quality defaults to fine and load can override it");
   assert.equal(step[0].format, "step");
   assert.equal(step[0].mmPerUnit, 1, "STEP is millimetres");
   assert(step[0].meshes > 0, "STEP produced geometry");
@@ -112,7 +120,6 @@ try {
   });
   assert(painted.bright > 20, `模型应当被渲染出来（亮像素 ${painted.bright}）`);
   assert.equal(painted.style, "edges", "默认带边线显示");
-  assert.equal(painted.edges, true, "首次加载会生成边线");
   assert.equal(painted.edges, true, "首次加载会生成边线");
   await page.screenshot({ path: path.join(tmpdir(), "mz-package-demo.png") });
   console.log(`✓ 渲染出画面（亮像素 ${painted.bright}，显示模式 ${painted.style}，边线 ${painted.edges}）`);
