@@ -54,20 +54,26 @@ await new Promise((resolve) => server.listen(port, "127.0.0.1", resolve));
 const gpuArgs = ["--enable-unsafe-webgpu"];
 if (process.platform === "linux") {
   gpuArgs.push("--enable-features=Vulkan", "--use-angle=vulkan", "--use-vulkan=swiftshader",
-    "--use-webgpu-adapter=swiftshader", "--disable-vulkan-surface");
+    "--use-webgpu-adapter=swiftshader", "--disable-vulkan-surface", "--disable-gpu-watchdog");
 }
 if (process.platform === "darwin") gpuArgs.push("--use-angle=metal");
 const browser = await chromium.launch({ channel: "chrome", args: gpuArgs });
 const page = await browser.newPage({ viewport: { width: 1100, height: 760 } });
 const errors = [];
-page.on("pageerror", (error) => errors.push(error.message));
+page.on("pageerror", (error) => {
+  errors.push(error.message);
+  if (process.env.CI) console.error(error.message);
+});
 page.on("response", (response) => {
   const url = response.url();
   if (response.status() >= 400 && !url.endsWith("/favicon.ico")) errors.push(`${response.status()} ${url}`);
 });
 page.on("console", (message) => {
   // A 404 already arrives through the response listener with its URL attached.
-  if (message.type() === "error" && !message.text().includes("Failed to load resource")) errors.push(message.text());
+  if (message.type() === "error" && !message.text().includes("Failed to load resource")) {
+    errors.push(message.text());
+    if (process.env.CI) console.error(message.text());
+  }
 });
 
 async function checkInPage(label, evaluate, input) {
