@@ -1,5 +1,5 @@
 {
-  "name": "mz-3d-viewer",
+  "name": "@mizy/mz-3d-viewer",
   "version": "0.1.0",
   "private": false,
   "type": "module",
@@ -51,5 +51,8 @@
   "sideEffects": false,
   "peerDependencies": {
     "three": "^0.186.0"
+  },
+  "publishConfig": {
+    "registry": "https://npm.pkg.github.com"
   }
 }

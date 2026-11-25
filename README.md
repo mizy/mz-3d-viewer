@@ -31,12 +31,22 @@ sub-path (`/mz-3d-viewer/`) so the GitHub Pages layout is what gets tested. Flag
 
 ## Use it as a package
 
+Configure the `@mizy` scope for GitHub Packages in your project's `.npmrc`:
+
+```ini
+@mizy:registry=https://npm.pkg.github.com
+//npm.pkg.github.com/:_authToken=${GITHUB_PACKAGES_READ_TOKEN}
+```
+
+Set `GITHUB_PACKAGES_READ_TOKEN` to a GitHub credential with read access to the package, then
+run `pnpm add @mizy/mz-3d-viewer`.
+
 The same source ships two ways: the app (`pnpm build` → `dist/`) and a library (`pnpm build:pkg` →
 `dist-lib/`). The library exports the parsers, an embeddable viewer, and the switch for where the
 OpenCascade assets live.
 
 ```ts
-import { configureCadAssets, createModelViewer } from "mz-3d-viewer";
+import { configureCadAssets, createModelViewer } from "@mizy/mz-3d-viewer";
 
 // Optional: the default is the occt/ directory shipped next to the package entry.
 configureCadAssets({ baseUrl: "/static/mz-occt/" });
@@ -48,7 +58,7 @@ await viewer.load(fileInput.files[0]);   // STEP / IGES / BREP / 3MF / STL / OBJ
 Headless, when the geometry only has to land in your own scene:
 
 ```ts
-import { parseModel } from "mz-3d-viewer";
+import { parseModel } from "@mizy/mz-3d-viewer";
 
 const { root, sourceUnit, warnings } = await parseModel(file, { quality: "fine" });
 // sourceUnit.mmPerUnit is 1 for STEP/IGES, the declared factor for 3MF, null when unknown.
