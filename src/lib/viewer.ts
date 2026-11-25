@@ -54,7 +54,12 @@ export async function createModelViewer(canvas: HTMLCanvasElement, options: View
     }
     const parsed: ParsedModel[] = [];
     for (const file of primaries) {
-      const model = await parseModel(file, { ...parseOptions, companions: files, renderer: parseOptions.renderer ?? renderer });
+      const model = await parseModel(file, {
+        ...parseOptions,
+        companions: files,
+        quality: parseOptions.quality ?? options.quality,
+        renderer: parseOptions.renderer ?? renderer
+      });
       const handle = stage.addModel(model, file.name);
       stage.setBytes(handle.id, file.size);
       stage.fitToActive();
