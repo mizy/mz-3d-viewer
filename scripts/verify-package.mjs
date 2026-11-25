@@ -8,7 +8,6 @@
 import assert from "node:assert/strict";
 import { createServer } from "node:http";
 import { readFile, stat } from "node:fs/promises";
-import { tmpdir } from "node:os";
 import path from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
@@ -120,30 +119,37 @@ try {
   assert(gltf.meshes > 0);
   console.log("✓ 无渲染器的 glTF 解析");
 
-  // Read the composited preview to check rendered pixels, including on software WebGPU runners.
-  const screenshot = await page.locator("#view").screenshot({
-    path: path.join(tmpdir(), "mz-package-demo.png"), timeout: 30000
-  });
-  const painted = await checkInPage("Rendered canvas", async (source) => {
-    const image = new Image();
-    image.src = source;
-    await image.decode();
-    const canvas = document.createElement("canvas");
-    canvas.width = 64;
-    canvas.height = 48;
-    const context = canvas.getContext("2d");
-    context.drawImage(image, 0, 0, 64, 48);
-    const { data } = context.getImageData(0, 0, 64, 48);
-    let bright = 0;
-    for (let i = 0; i < data.length; i += 4) {
-      if (data[i] + data[i + 1] + data[i + 2] > 120) bright += 1;
+  // Read actual WebGPU pixels. A headless software compositor may present an empty canvas
+  // even after drawing correctly to a GPU render target.
+  const painted = await checkInPage("Rendered GPU target", async () => {
+    const { RenderTarget } = await import("/node_modules/three/build/three.webgpu.js");
+    const { viewer, style, edges } = window.__pkg;
+    const { renderer, scene, camera } = viewer.stage;
+    const target = new RenderTarget(64, 48);
+    const previous = renderer.getRenderTarget();
+    try {
+      renderer.setRenderTarget(target);
+      try {
+        renderer.render(scene, camera);
+      } finally {
+        renderer.setRenderTarget(previous);
+      }
+      const pixels = await renderer.readRenderTargetPixelsAsync(target, 0, 0, 64, 48);
+      let lit = 0;
+      for (let offset = 0; offset < pixels.length; offset += 4) {
+        const delta = Math.abs(pixels[offset] - pixels[0]) +
+          Math.abs(pixels[offset + 1] - pixels[1]) + Math.abs(pixels[offset + 2] - pixels[2]);
+        if (delta > 30) lit++;
+      }
+      return { lit, style: style(), edges: edges() };
+    } finally {
+      target.dispose();
     }
-    return { bright, style: window.__pkg.style(), edges: window.__pkg.edges() };
-  }, `data:image/png;base64,${screenshot.toString("base64")}`);
-  assert(painted.bright > 20, `模型应当被渲染出来（亮像素 ${painted.bright}）`);
+  });
+  assert(painted.lit > 20, `GPU target did not show the model (${painted.lit} pixels). Browser errors: ${errors.join(" | ")}`);
   assert.equal(painted.style, "edges", "默认带边线显示");
   assert.equal(painted.edges, true, "首次加载会生成边线");
-  console.log(`✓ 渲染出画面（亮像素 ${painted.bright}，显示模式 ${painted.style}，边线 ${painted.edges}）`);
+  console.log(`✓ 渲染出画面（模型像素 ${painted.lit}，显示模式 ${painted.style}，边线 ${painted.edges}）`);
 
   const pick = await checkInPage("CAD face and edge picking", async () => {
     const { viewer, load } = window.__pkg;
